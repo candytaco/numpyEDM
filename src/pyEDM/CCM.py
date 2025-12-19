@@ -3,8 +3,7 @@
 from multiprocessing import get_context
 
 # package modules
-from pandas import DataFrame, concat
-from numpy  import array, exp, fmax, divide, mean, nan, roll, sum, zeros
+from numpy  import array, exp, fmax, divide, mean, nan, roll, sum, zeros, column_stack
 from numpy.random import default_rng
 
 # local modules
@@ -16,7 +15,7 @@ class CCM:
     '''CCM class : Base class. Contains two Simplex instances'''
 
     def __init__( self,
-                  dataFrame       = None,
+                  data            = None,
                   columns         = "",
                   target          = "",
                   E               = 0,
@@ -39,7 +38,7 @@ class CCM:
 
         # Assign parameters from API arguments
         self.name            = 'CCM'
-        self.Data            = dataFrame
+        self.Data            = data
         self.columns         = columns
         self.target          = target
         self.E               = E
@@ -74,37 +73,37 @@ class CCM:
         # Each __init__ calls EDM.Validate() & EDM.CreateIndices()
         # and sets up targetVec, allTime
         # EDM.Validate sets default knn, overrides E if embedded
-        self.FwdMap = SimplexClass( dataFrame       = dataFrame,
-                                    columns         = columns,
-                                    target          = target,
-                                    lib             = self.lib,
-                                    pred            = self.pred,
-                                    E               = E,
-                                    Tp              = Tp,
-                                    knn             = knn,
-                                    tau             = tau,
-                                    exclusionRadius = exclusionRadius,
-                                    embedded        = embedded,
-                                    validLib        = validLib,
-                                    noTime          = noTime,
-                                    ignoreNan       = ignoreNan,
-                                    verbose         = verbose )
+        self.FwdMap = SimplexClass(data = data,
+                                   columns         = columns,
+                                   target          = target,
+                                   lib             = self.lib,
+                                   pred            = self.pred,
+                                   E               = E,
+                                   Tp              = Tp,
+                                   knn             = knn,
+                                   tau             = tau,
+                                   exclusionRadius = exclusionRadius,
+                                   embedded        = embedded,
+                                   validLib        = validLib,
+                                   noTime          = noTime,
+                                   ignoreNan       = ignoreNan,
+                                   verbose         = verbose)
 
-        self.RevMap = SimplexClass( dataFrame       = dataFrame,
-                                    columns         = target,
-                                    target          = columns,
-                                    lib             = self.lib,
-                                    pred            = self.pred,
-                                    E               = E,
-                                    Tp              = Tp,
-                                    knn             = knn,
-                                    tau             = tau,
-                                    exclusionRadius = exclusionRadius,
-                                    embedded        = embedded,
-                                    validLib        = validLib,
-                                    noTime          = noTime,
-                                    ignoreNan       = ignoreNan,
-                                    verbose         = verbose )
+        self.RevMap = SimplexClass(data = data,
+                                   columns         = target,
+                                   target          = columns,
+                                   lib             = self.lib,
+                                   pred            = self.pred,
+                                   E               = E,
+                                   Tp              = Tp,
+                                   knn             = knn,
+                                   tau             = tau,
+                                   exclusionRadius = exclusionRadius,
+                                   embedded        = embedded,
+                                   validLib        = validLib,
+                                   noTime          = noTime,
+                                   ignoreNan       = ignoreNan,
+                                   verbose         = verbose)
 
     #-------------------------------------------------------------------
     # Methods
@@ -130,44 +129,46 @@ class CCM:
 
         FwdCM, RevCM = self.CrossMapList
 
-        self.libMeans = \
-            DataFrame( {'LibSize' : FwdCM['libRho'].keys(),
-                        f"{FwdCM['columns'][0]}:{FwdCM['target'][0]}" :
-                        FwdCM['libRho'].values(),
-                        f"{RevCM['columns'][0]}:{RevCM['target'][0]}" :
-                        RevCM['libRho'].values() } )
+        # Create libMeans array: shape (n_lib_sizes, 3)
+        # Column 0: LibSize, Column 1: Fwd rho, Column 2: Rev rho
+        lib_sizes = array(list(FwdCM['libRho'].keys()))
+        fwd_rhos = array(list(FwdCM['libRho'].values()))
+        rev_rhos = array(list(RevCM['libRho'].values()))
+
+        self.libMeans = column_stack([lib_sizes, fwd_rhos, rev_rhos])
 
         if self.includeData :
             FwdCMStats = FwdCM['predictStats'] # key libSize : list of CE dicts
             RevCMStats = RevCM['predictStats']
 
-            FwdCMDF = []
+            # Build PredictStats1 array
+            # Each row is a sample with: LibSize, rho, mae, rmse, mse, nrmse
+            stats1_rows = []
             for libSize in FwdCMStats.keys() :
                 LibSize  = [libSize] * self.sample # this libSize sample times
                 libStats = FwdCMStats[libSize]     # sample ComputeError dicts
 
-                libStatsDF = DataFrame( libStats )
-                libSizeDF  = DataFrame( { 'LibSize' : LibSize } )
-                libDF      = concat( [libSizeDF, libStatsDF], axis = 1 )
+                for s in range(self.sample):
+                    stats = libStats[s]
+                    row = [libSize[s], stats['rho'], stats['mae'], stats['rmse'],
+                           stats['mse'], stats['nrmse']]
+                    stats1_rows.append(row)
 
-                FwdCMDF.append( libDF )
+            self.PredictStats1 = array(stats1_rows)
 
-            RevCMDF = []
+            # Build PredictStats2 array
+            stats2_rows = []
             for libSize in RevCMStats.keys() :
                 LibSize  = [libSize] * self.sample # this libSize sample times
                 libStats = RevCMStats[libSize]     # sample ComputeError dicts
 
-                libStatsDF = DataFrame( libStats )
-                libSizeDF  = DataFrame( { 'LibSize' : LibSize } )
-                libDF      = concat( [libSizeDF, libStatsDF], axis = 1 )
+                for s in range(self.sample):
+                    stats = libStats[s]
+                    row = [libSize[s], stats['rho'], stats['mae'], stats['rmse'],
+                           stats['mse'], stats['nrmse']]
+                    stats2_rows.append(row)
 
-                RevCMDF.append( libDF )
-
-            FwdStatDF = concat( FwdCMDF, axis = 0 )
-            RevStatDF = concat( RevCMDF, axis = 0 )
-
-            self.PredictStats1 = FwdStatDF
-            self.PredictStats2 = RevStatDF
+            self.PredictStats2 = array(stats2_rows)
 
     #-------------------------------------------------------------------
     # 
@@ -187,7 +188,7 @@ class CCM:
         RNG = default_rng( self.seed )
 
         # Copy S.lib_i since it's replaced every iteration
-        lib_i   = S.lib_i.copy()
+        lib_i   = S.trainIndices.copy()
         N_lib_i = len( lib_i )
 
         libRhoMap  = {} # Output dict libSize key : mean rho value
@@ -205,7 +206,7 @@ class CCM:
                 rng_i = RNG.choice( lib_i, size = min( libSize, N_lib_i ),
                                     replace = False )
 
-                S.lib_i = rng_i
+                S.trainIndices = rng_i
 
                 S.FindNeighbors() # Depends on S.lib_i
 
@@ -241,8 +242,8 @@ class CCM:
                 elif S.Tp < 0 :
                     projection_[ S.Tp: ] = nan
 
-                err = ComputeError( S.targetVec[ S.pred_i, 0 ],
-                                    projection_, digits = 5 )
+                err = ComputeError(S.targetVec[ S.testIndices, 0],
+                                   projection_, digits = 5)
 
                 rhos[ s ] = err['rho']
 
@@ -255,7 +256,7 @@ class CCM:
                 libStatMap[ libSize ] = predictStats
 
         # Reset S.lib_i to original
-        S.lib_i = lib_i
+        S.trainIndices = lib_i
 
         if self.includeData :
             return { 'columns' : S.columns, 'target' : S.target,
