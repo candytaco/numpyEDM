@@ -47,7 +47,7 @@ class Multiview:
              may be warranted to filter prospective embedding vectors.
              The trainLib flag disables this default behavior (test == train)
              so that the top k rankings are done using the specified
-             train and test. 
+             train and test.
     '''
 
     def __init__( self,
@@ -129,7 +129,7 @@ class Multiview:
                  'ignoreNan'       : self.ignoreNan }
 
         if self.trainLib :
-            # Set test = train for in-sample training 
+            # Set test = train for in-sample training
             args['test'] = self.train
 
         # Create iterable for Pool.starmap, repeated copies of data, args
