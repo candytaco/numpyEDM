@@ -5,7 +5,6 @@ from multiprocessing import get_context
 from itertools       import repeat
 
 # package modules
-from pandas import DataFrame, concat
 from matplotlib.pyplot import show, axhline
 
 # local modules
@@ -20,9 +19,9 @@ import pyEDM.PoolFunc as PoolFunc
 #------------------------------------------------------------------------
 #
 #------------------------------------------------------------------------
-def Simplex( dataFrame       = None,
-             columns         = "",
-             target          = "",
+def Simplex( data            = None,
+             columns         = None,
+             target          = None,
              lib             = "",
              pred            = "",
              E               = 0,
@@ -39,28 +38,37 @@ def Simplex( dataFrame       = None,
              showPlot        = False,
              ignoreNan       = True,
              returnObject    = False ):
-    '''Simplex prediction of dataFrame target from columns.'''
+    '''Simplex prediction using numpy array data.
+
+    Parameters:
+    data : numpy.ndarray, shape (n_samples, n_features)
+        2D numpy array where column 0 is time
+    columns : list of int or None
+        Column indices to use for embedding (defaults to all except time)
+    target : int or None
+        Target column index (defaults to column 1)
+    '''
 
     # Instantiate SimplexClass object
-    #    Constructor assigns dataFrame to self, calls Validate(),
+    #    Constructor assigns data to self, calls Validate(),
     #    CreateIndices(), and assigns targetVec, time
-    S = SimplexClass( dataFrame       = dataFrame,
-                      columns         = columns,
-                      target          = target,
-                      lib             = lib,
-                      pred            = pred,
-                      E               = E,
-                      Tp              = Tp,
-                      knn             = knn,
-                      tau             = tau,
-                      exclusionRadius = exclusionRadius,
-                      embedded        = embedded,
-                      validLib        = validLib,
-                      noTime          = noTime,
-                      generateSteps   = generateSteps,
-                      generateConcat  = generateConcat,
-                      ignoreNan       = ignoreNan,
-                      verbose         = verbose )
+    S = SimplexClass(data = data,
+                     columns         = columns,
+                     target          = target,
+                     lib             = lib,
+                     pred            = pred,
+                     E               = E,
+                     Tp              = Tp,
+                     knn             = knn,
+                     tau             = tau,
+                     exclusionRadius = exclusionRadius,
+                     embedded        = embedded,
+                     validLib        = validLib,
+                     noTime          = noTime,
+                     generateSteps   = generateSteps,
+                     generateConcat  = generateConcat,
+                     ignoreNan       = ignoreNan,
+                     verbose         = verbose)
 
     if generateSteps :
         S.Generate()
@@ -78,9 +86,9 @@ def Simplex( dataFrame       = None,
 #------------------------------------------------------------------------
 #
 #------------------------------------------------------------------------
-def SMap( dataFrame       = None,
-          columns         = "",
-          target          = "",
+def SMap( data            = None,
+          columns         = None,
+          target          = None,
           lib             = "",
           pred            = "",
           E               = 0,
@@ -99,7 +107,16 @@ def SMap( dataFrame       = None,
           showPlot        = False,
           verbose         = False,
           returnObject    = False ):
-    '''S-Map prediction of dataFrame target from columns.'''
+    '''S-Map prediction using numpy array data.
+
+    Parameters:
+    data : numpy.ndarray, shape (n_samples, n_features)
+        2D numpy array where column 0 is time
+    columns : list of int or None
+        Column indices to use for embedding (defaults to all except time)
+    target : int or None
+        Target column index (defaults to column 1)
+    '''
 
     # Validate solver if one was provided
     if solver is not None :
@@ -118,27 +135,27 @@ def SMap( dataFrame       = None,
             raise Exception( msg )
 
     # Instantiate SMapClass object
-    #    Constructor assigns dataFrame to self, calls Validate(),
+    #    Constructor assigns data to self, calls Validate(),
     #    CreateIndices(), and assigns targetVec, time
-    S = SMapClass( dataFrame       = dataFrame,
-                   columns         = columns,
-                   target          = target,
-                   lib             = lib,
-                   pred            = pred,
-                   E               = E,
-                   Tp              = Tp,
-                   knn             = knn,
-                   tau             = tau,
-                   theta           = theta,
-                   exclusionRadius = exclusionRadius,
-                   solver          = solver,
-                   embedded        = embedded,
-                   validLib        = validLib,
-                   noTime          = noTime,
-                   generateSteps   = generateSteps,
-                   generateConcat  = generateConcat,
-                   ignoreNan       = ignoreNan,
-                   verbose         = verbose )
+    S = SMapClass(data = data,
+                  columns         = columns,
+                  target          = target,
+                  lib             = lib,
+                  pred            = pred,
+                  E               = E,
+                  Tp              = Tp,
+                  knn             = knn,
+                  tau             = tau,
+                  theta           = theta,
+                  exclusionRadius = exclusionRadius,
+                  solver          = solver,
+                  embedded        = embedded,
+                  validLib        = validLib,
+                  noTime          = noTime,
+                  generateSteps   = generateSteps,
+                  generateConcat  = generateConcat,
+                  ignoreNan       = ignoreNan,
+                  verbose         = verbose)
 
     if generateSteps :
         S.Generate()
@@ -160,9 +177,9 @@ def SMap( dataFrame       = None,
 #------------------------------------------------------------------------
 #
 #------------------------------------------------------------------------
-def CCM( dataFrame        = None,
-         columns          = "",
-         target           = "",
+def CCM( data             = None,
+         columns          = None,
+         target           = None,
          libSizes         = "",
          sample           = 0,
          E                = 0,
@@ -181,11 +198,20 @@ def CCM( dataFrame        = None,
          verbose          = False,
          showPlot         = False,
          returnObject     = False ) :
-    '''Convergent Cross Mapping.'''
+    '''Convergent Cross Mapping.
+
+    Parameters:
+    data : numpy.ndarray, shape (n_samples, n_features)
+        2D numpy array where column 0 is time
+    columns : list of int or None
+        Column indices to use (defaults to all except time)
+    target : int or list of int or None
+        Target column index (defaults to column 1)
+    '''
 
     # Instantiate CCMClass object
     # __init__ creates .FwdMap & .RevMap
-    C = CCMClass( dataFrame       = dataFrame,
+    C = CCMClass( data            = data,
                   columns         = columns,
                   target          = target,
                   E               = E,
@@ -214,18 +240,21 @@ def CCM( dataFrame        = None,
     C.Project()
 
     if showPlot :
+        import matplotlib.pyplot as plt
         title = f'E = {C.E}'
+        fig, ax = plt.subplots()
+
+        # C.libMeans is numpy array: Column 0 is LibSize, rest are rho values
         if C.libMeans.shape[1] == 3 :
             # CCM of two different variables
-            ax = C.libMeans.plot(
-                'LibSize', [ C.libMeans.columns[1], C.libMeans.columns[2] ],
-                title = title, linewidth = 3 )
+            ax.plot(C.libMeans[:, 0], C.libMeans[:, 1], linewidth=3, label='Col 1')
+            ax.plot(C.libMeans[:, 0], C.libMeans[:, 2], linewidth=3, label='Col 2')
+            ax.legend()
         elif C.libMeans.shape[1] == 2 :
             # CCM of degenerate columns : target
-            ax = C.libMeans.plot( 'LibSize', C.libMeans.columns[1],
-                                  title = title, linewidth = 3 )
+            ax.plot(C.libMeans[:, 0], C.libMeans[:, 1], linewidth=3)
 
-        ax.set( xlabel = "Library Size", ylabel = "CCM ρ" )
+        ax.set( xlabel = "Library Size", ylabel = "CCM ρ", title=title )
         axhline( y = 0, linewidth = 1 )
         show()
 
@@ -242,13 +271,13 @@ def CCM( dataFrame        = None,
 #------------------------------------------------------------------------
 #
 #------------------------------------------------------------------------
-def Multiview( dataFrame       = None,
-               columns         = "",
-               target          = "",
+def Multiview( data            = None,
+               columns         = None,
+               target          = None,
                lib             = "",
                pred            = "",
                D               = 0,
-               E               = 1, 
+               E               = 1,
                Tp              = 1,
                knn             = 0,
                tau             = -1,
@@ -263,11 +292,20 @@ def Multiview( dataFrame       = None,
                chunksize       = 1,
                showPlot        = False,
                returnObject    = False ):
-    '''Multiview prediction on path/file.'''
+    '''Multiview prediction using numpy array data.
+
+    Parameters:
+    data : numpy.ndarray, shape (n_samples, n_features)
+        2D numpy array where column 0 is time
+    columns : list of int or None
+        Column indices to use (defaults to all except time)
+    target : int or None
+        Target column index (defaults to column 1)
+    '''
 
     # Instantiate MultiviewClass object
     # __init__ creates .Simplex_, calls Validate(), Setup()
-    M = MultiviewClass( dataFrame       = dataFrame,
+    M = MultiviewClass( data            = data,
                         columns         = columns,
                         target          = target,
                         lib             = lib,
@@ -292,31 +330,38 @@ def Multiview( dataFrame       = None,
     M.Project()
 
     # multiview averaged prediction
-    df = concat( M.topRankProjections.values(), axis = 1 )
-    df = df[ 'Predictions' ]
-    multiviewPredict = df.mean( axis = 1 )
+    # M.topRankProjections is dict of combo : numpy array
+    # Each array has columns: [Time, Observations, Predictions, Pred_Variance]
+    import numpy as np
 
-    # Get a Simplex returned DataFrame for Time and Observations
-    df_pred = iter( M.topRankProjections.values() ).__next__()
+    # Get first projection for Time and Observations
+    first_proj = next(iter(M.topRankProjections.values()))
 
-    df = DataFrame( { 'Time'        : df_pred['Time'],
-                      'Observations': df_pred['Observations'],
-                      'Predictions' : multiviewPredict } )
+    # Collect all predictions (column 2) and average them
+    all_predictions = [proj[:, 2] for proj in M.topRankProjections.values()]
+    multiviewPredict = np.mean(all_predictions, axis=0)
 
-    M.Projection = df
+    # Create result array: [Time, Observations, Predictions]
+    M.Projection = np.column_stack([first_proj[:, 0], first_proj[:, 1], multiviewPredict])
 
-    # View DataFrame
-    colCombos = list( M.topRankProjections.keys() )
-    dfCombos  = DataFrame( {'Columns': colCombos } )
+    # Create View: rankings of column combinations
+    colCombos = list(M.topRankProjections.keys())
 
     topRankStats = {}
     for combo in colCombos :
-        df_ = M.topRankProjections[ combo ]
-        topRankStats[ combo ] = ComputeError( df_['Observations'],
-                                              df_['Predictions'] )
+        proj = M.topRankProjections[combo]
+        # proj columns: 0=Time, 1=Observations, 2=Predictions, 3=Variance
+        topRankStats[combo] = ComputeError(proj[:, 1], proj[:, 2])
+
     M.topRankStats = topRankStats
-    M.View         = concat( [ dfCombos, DataFrame( M.topRankStats.values() ) ],
-                             axis = 1 )
+
+    # Build View array: each row is [combo_as_str, rho, MAE, CAE, RMSE]
+    view_rows = []
+    for combo in colCombos:
+        stats = topRankStats[combo]
+        view_rows.append([str(combo), stats['rho'], stats['MAE'], stats['CAE'], stats['RMSE']])
+
+    M.View = view_rows  # List of lists for now
 
     if showPlot :
         PlotObsPred( M.Projection, "", M.D, M.Tp )
@@ -329,9 +374,9 @@ def Multiview( dataFrame       = None,
 #------------------------------------------------------------------------
 #
 #------------------------------------------------------------------------
-def EmbedDimension( dataFrame       = None,
-                    columns         = "",
-                    target          = "",
+def EmbedDimension( data            = None,
+                    columns         = None,
+                    target          = None,
                     maxE            = 10,
                     lib             = "",
                     pred            = "",
@@ -347,7 +392,20 @@ def EmbedDimension( dataFrame       = None,
                     mpMethod        = None,
                     chunksize       = 1,
                     showPlot        = True ):
-    '''Estimate optimal embedding dimension [1:maxE].'''
+    '''Estimate optimal embedding dimension [1:maxE].
+
+    Parameters:
+    data : numpy.ndarray, shape (n_samples, n_features)
+        2D numpy array where column 0 is time
+    columns : list of int or None
+        Column indices to use (defaults to all except time)
+    target : int or None
+        Target column index (defaults to column 1)
+
+    Returns:
+    numpy.ndarray, shape (maxE, 2)
+        Column 0: E values, Column 1: rho values
+    '''
 
     # Setup Pool
     Evals = [ E for E in range( 1, maxE + 1 ) ]
@@ -364,7 +422,7 @@ def EmbedDimension( dataFrame       = None,
              'ignoreNan'       : ignoreNan }
 
     # Create iterable for Pool.starmap, use repeated copies of data, args
-    poolArgs = zip( Evals, repeat( dataFrame ), repeat( args ) )
+    poolArgs = zip( Evals, repeat( data ), repeat( args ) )
 
     # Multiargument starmap : EmbedDimSimplexFunc in PoolFunc
     mpContext = get_context( mpMethod )
@@ -372,23 +430,27 @@ def EmbedDimension( dataFrame       = None,
         rhoList = pool.starmap( PoolFunc.EmbedDimSimplexFunc, poolArgs,
                                 chunksize = chunksize )
 
-    df = DataFrame( {'E':Evals, 'rho':rhoList} )
+    import numpy as np
+    result = np.column_stack([Evals, rhoList])
 
     if showPlot :
+        import matplotlib.pyplot as plt
         title = "Tp=" + str(Tp)
-        ax = df.plot( 'E', 'rho', title = title, linewidth = 3 )
+        fig, ax = plt.subplots()
+        ax.plot(result[:, 0], result[:, 1], linewidth=3)
         ax.set( xlabel = "Embedding Dimension",
-                ylabel = "Prediction Skill ρ" )
+                ylabel = "Prediction Skill ρ",
+                title = title )
         show()
 
-    return df
+    return result
 
 #------------------------------------------------------------------------
 #
 #------------------------------------------------------------------------
-def PredictInterval( dataFrame       = None,
-                     columns         = "",
-                     target          = "",
+def PredictInterval( data            = None,
+                     columns         = None,
+                     target          = None,
                      lib             = "",
                      pred            = "",
                      maxTp           = 10,
@@ -404,7 +466,20 @@ def PredictInterval( dataFrame       = None,
                      mpMethod        = None,
                      chunksize       = 1,
                      showPlot        = True ):
-    '''Estimate optimal prediction interval [1:maxTp]'''
+    '''Estimate optimal prediction interval [1:maxTp].
+
+    Parameters:
+    data : numpy.ndarray, shape (n_samples, n_features)
+        2D numpy array where column 0 is time
+    columns : list of int or None
+        Column indices to use (defaults to all except time)
+    target : int or None
+        Target column index (defaults to column 1)
+
+    Returns:
+    numpy.ndarray, shape (maxTp, 2)
+        Column 0: Tp values, Column 1: rho values
+    '''
 
     # Setup Pool
     Evals = [ Tp for Tp in range( 1, maxTp + 1 ) ]
@@ -421,7 +496,7 @@ def PredictInterval( dataFrame       = None,
              'ignoreNan'       : ignoreNan }
 
     # Create iterable for Pool.starmap, use repeated copies of data, args
-    poolArgs = zip( Evals, repeat( dataFrame ), repeat( args ) )
+    poolArgs = zip( Evals, repeat( data ), repeat( args ) )
 
     # Multiargument starmap : EmbedDimSimplexFunc in PoolFunc
     mpContext = get_context( mpMethod )
@@ -429,28 +504,32 @@ def PredictInterval( dataFrame       = None,
         rhoList = pool.starmap( PoolFunc.PredictIntervalSimplexFunc, poolArgs,
                                 chunksize = chunksize )
 
-    df = DataFrame( {'Tp':Evals, 'rho':rhoList} )
+    import numpy as np
+    result = np.column_stack([Evals, rhoList])
 
     if showPlot :
         if embedded :
             if IsIterable( columns ) :
                 E = len( columns )
             else :
-                E = len( columns.split() )
+                E = 1
         title = "E=" + str( E )
-        ax = df.plot( 'Tp', 'rho', title = title, linewidth = 3 )
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
+        ax.plot(result[:, 0], result[:, 1], linewidth=3)
         ax.set( xlabel = "Forecast Interval",
-                ylabel = "Prediction Skill ρ" )
+                ylabel = "Prediction Skill ρ",
+                title = title )
         show()
 
-    return df
+    return result
 
 #------------------------------------------------------------------------
 #
 #------------------------------------------------------------------------
-def PredictNonlinear( dataFrame       = None,
-                      columns         = "",
-                      target          = "",
+def PredictNonlinear( data            = None,
+                      columns         = None,
+                      target          = None,
                       theta           = None,
                       lib             = "",
                       pred            = "",
@@ -469,7 +548,20 @@ def PredictNonlinear( dataFrame       = None,
                       mpMethod        = None,
                       chunksize       = 1,
                       showPlot        = True ):
-    '''Estimate S-map localisation over theta.'''
+    '''Estimate S-map localisation over theta.
+
+    Parameters:
+    data : numpy.ndarray, shape (n_samples, n_features)
+        2D numpy array where column 0 is time
+    columns : list of int or None
+        Column indices to use (defaults to all except time)
+    target : int or None
+        Target column index (defaults to column 1)
+
+    Returns:
+    numpy.ndarray, shape (len(theta), 2)
+        Column 0: theta values, Column 1: rho values
+    '''
 
     if theta is None :
         theta = [ 0.01, 0.1, 0.3, 0.5, 0.75, 1,
@@ -494,7 +586,7 @@ def PredictNonlinear( dataFrame       = None,
              'ignoreNan'       : ignoreNan }
 
     # Create iterable for Pool.starmap, use repeated copies of data, args
-    poolArgs = zip( theta, repeat( dataFrame ), repeat( args ) )
+    poolArgs = zip( theta, repeat( data ), repeat( args ) )
 
     # Multiargument starmap : EmbedDimSimplexFunc in PoolFunc
     mpContext = get_context( mpMethod )
@@ -502,19 +594,23 @@ def PredictNonlinear( dataFrame       = None,
         rhoList = pool.starmap( PoolFunc.PredictNLSMapFunc, poolArgs,
                                 chunksize = chunksize )
 
-    df = DataFrame( {'theta':theta, 'rho':rhoList} )
+    import numpy as np
+    result = np.column_stack([theta, rhoList])
 
     if showPlot :
         if embedded :
             if IsIterable( columns ) :
                 E = len( columns )
             else :
-                E = len( columns.split() )
+                E = 1
         title = "E=" + str( E )
 
-        ax = df.plot( 'theta', 'rho', title = title, linewidth = 3 )
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
+        ax.plot(result[:, 0], result[:, 1], linewidth=3)
         ax.set( xlabel = "S-map Localisation (θ)",
-                ylabel = "Prediction Skill ρ" )
+                ylabel = "Prediction Skill ρ",
+                title = title )
         show()
 
-    return df
+    return result
