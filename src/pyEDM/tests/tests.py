@@ -1,11 +1,10 @@
-
-import sys
 import unittest
-from   datetime import datetime
-from   warnings import filterwarnings, catch_warnings
+from datetime import datetime
+from warnings import filterwarnings, catch_warnings
 
-from numpy  import nan, array, array_equal
+from numpy import nan, array, array_equal
 from pandas import DataFrame, read_csv
+
 import pyEDM as EDM
 import pyEDM.Embed
 
