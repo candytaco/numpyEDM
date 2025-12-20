@@ -98,7 +98,7 @@ Some validation happens in API functions (solver in SMap), some in class constru
 Create dataclasses for shared parameter groups:
 
 ```python
-# src/pyEDM/Config.py
+# src/pyEDM/Parameters.py
 
 from dataclasses import dataclass
 from typing import Optional, List, Tuple
