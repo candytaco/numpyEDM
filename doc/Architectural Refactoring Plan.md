@@ -670,19 +670,19 @@ Clean, intuitive API with no namespace conflicts:
 
 ```python
 # Simple usage
-from pyEDM import Simplex, EDMParameters, DataSplit
+from pyEDM import FitSimplex, EDMParameters, DataSplit
 
 params = EDMParameters(
-    data=my_data,
-    embedDimensions=3,
-    target=1,
-    predictionHorizon=1
+   data = my_data,
+   embedDimensions = 3,
+   target = 1,
+   predictionHorizon = 1
 )
 
-split = DataSplit(train=[1, 100], test=[101, 200])
+split = DataSplit(train = [1, 100], test = [101, 200])
 
 # Create and run model
-model = Simplex(params, split)
+model = FitSimplex(params, split)
 result = model.run()
 
 # Access results
@@ -690,47 +690,48 @@ print(f"Correlation: {result.compute_error()['correlation']}")
 
 # Plot if desired
 from pyEDM import plot_prediction
+
 plot_prediction(result)
 
 # ---- More compact usage ----
-result = Simplex(params, split).run()
+result = FitSimplex(params, split).run()
 
 # ---- SMap example ----
-from pyEDM import SMap, SMapParameters
+from pyEDM import FitSMap, SMapParameters
 
-smap_params = SMapParameters(theta=2.0)
-smap_result = SMap(params, split, smap_params).run()
+smap_params = SMapParameters(theta = 2.0)
+smap_result = FitSMap(params, split, smap_params).run()
 
 # Access SMap-specific results
 coefficients = smap_result.coefficients
 plot_smap_coefficients(smap_result)
 
 # ---- CCM example ----
-from pyEDM import CCM, CCMParameters
+from pyEDM import FitCCM, CCMParameters
 
-ccm_params = CCMParameters(trainSizes=[10, 50, 10], sample=100)
-ccm_model = CCM(params, ccm_params)
+ccm_params = CCMParameters(trainSizes = [10, 50, 10], sample = 100)
+ccm_model = FitCCM(params, ccm_params)
 ccm_result = ccm_model.run()
 plot_ccm(ccm_result)
 
 # ---- Multiview example ----
-from pyEDM import Multiview, MultiviewParameters
+from pyEDM import FitMultiview, MultiviewParameters
 
-mv_params = MultiviewParameters(D=3, trainLib=False)
-mv_result = Multiview(params, split, mv_params).run()
+mv_params = MultiviewParameters(D = 3, trainLib = False)
+mv_result = FitMultiview(params, split, mv_params).run()
 print(mv_result.view)  # Rankings
 
 # ---- With execution control ----
 from pyEDM import ExecutionMode
 
 params_with_execution = EDMParameters(
-    data=my_data,
-    embedDimensions=3,
-    execution=ExecutionMode.MULTIPROCESS,
-    numProcess=8
+   data = my_data,
+   embedDimensions = 3,
+   execution = ExecutionMode.MULTIPROCESS,
+   numProcess = 8
 )
 
-result = Simplex(params_with_execution, split).run()
+result = FitSimplex(params_with_execution, split).run()
 ```
 
 #### Benefits
@@ -745,35 +746,6 @@ result = Simplex(params_with_execution, split).run()
 - **Maintainable**: Single responsibility for each class
 
 ## Migration Strategy
-
-### Backwards Compatibility
-
-Maintain old API alongside new for at least one major version:
-
-```python
-# API.py
-
-def Simplex(*args, **kwargs):
-    """Simplex prediction (legacy interface)"""
-    # Detect if using new or old calling convention
-    if len(args) > 0 and isinstance(args[0], EDMParameters):
-        # New interface
-        return _simplex_new(*args, **kwargs)
-    else:
-        # Old interface - convert to new
-        warnings.warn(
-            "Legacy Simplex interface is deprecated. "
-            "Use EDMParameters configuration objects.",
-            DeprecationWarning
-        )
-        return _simplex_legacy(*args, **kwargs)
-```
-
-### Deprecation Timeline
-
-1. Version 3.0: Introduce new architecture alongside old
-2. Version 3.x: Both interfaces work, old emits deprecation warnings
-3. Version 4.0: Remove old interface
 
 ### Documentation Updates
 
@@ -790,7 +762,6 @@ def Simplex(*args, **kwargs):
 5. Create Execution.py with strategy pattern
 6. Refactor API.py to use new components
 7. Update PoolFunc.py to work with new structure
-8. Add backwards compatibility layer
 9. Update tests
 10. Update documentation and examples
 

@@ -240,37 +240,37 @@ import pandas as pd
 data = pd.read_csv('data/TentMap.csv')
 
 # Simplex prediction
-result = pyEDM.API.Simplex(
-	dataFrame = data,
-	columns = 'TentMap',
-	target = 'TentMap',
-	lib = '1 100',
-	pred = '101 200',
-	E = 3,
-	Tp = 1,
-	tau = -1
+result = pyEDM.API.FitSimplex(
+  dataFrame = data,
+  columns = 'TentMap',
+  target = 'TentMap',
+  lib = '1 100',
+  pred = '101 200',
+  E = 3,
+  Tp = 1,
+  tau = -1
 )
 
 # S-Map prediction
-result = pyEDM.API.SMap(
-	dataFrame = data,
-	columns = 'TentMap',
-	target = 'TentMap',
-	lib = '1 100',
-	pred = '101 200',
-	E = 3,
-	Tp = 1,
-	tau = -1,
-	theta = 0.5
+result = pyEDM.API.FitSMap(
+  dataFrame = data,
+  columns = 'TentMap',
+  target = 'TentMap',
+  lib = '1 100',
+  pred = '101 200',
+  E = 3,
+  Tp = 1,
+  tau = -1,
+  theta = 0.5
 )
 
 # CCM analysis
-result = pyEDM.API.CCM(
-	dataFrame = data,
-	columns = 'TentMap',
-	target = 'TentMap',
-	trainSizes = '10 100 10',
-	sample = 10
+result = pyEDM.API.FitCCM(
+  dataFrame = data,
+  columns = 'TentMap',
+  target = 'TentMap',
+  trainSizes = '10 100 10',
+  sample = 10
 )
 ```
 

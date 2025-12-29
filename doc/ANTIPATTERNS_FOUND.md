@@ -1,219 +1,100 @@
-# Architecture Antipatterns in numpyEDM
+# Antipatterns Found in EDM Codebase
 
-## 1. TIGHT COUPLING WITH PANDAS DATAFRAMES
+## 1. Type Checking Anti-Pattern (Primary Issue)
+**Location**: EDM.py base class
+**Problem**: Uses `self.name` parameter to determine class-specific behavior instead of proper method overriding
+**Examples**:
+- `if self.name == 'SMap':` for SMap-specific logic
+- `if self.name in ['Simplex', 'SMap', 'Multiview']:` for validation
+- `if self.name != 'CCM':` to skip CCM validation
 
-### Problem:
-The entire codebase is tightly coupled to pandas DataFrames, creating several issues:
+**Impact**: Violates OOP principles, scatters class-specific logic, makes code hard to extend
 
-**Evidence:**
-- `EDM.py` validates input is a DataFrame: `isinstance(self.Data, DataFrame)`
-- `Embed.py` originally used DataFrame.shift() for embedding
-- `Neighbors.py` converts DataFrame to numpy for KDTree but keeps DataFrame as primary storage
-- `SMap.py` and `Simplex.py` use `.iloc[]` extensively for DataFrame access
-- 21 instances of `.iloc[]` found across the codebase
+## 2. Incomplete Inheritance Implementation
+**Location**: EDM.py, Simplex.py, SMap.py
+**Problem**: TODO comments indicate unfinished refactoring work for proper inheritance
+**Examples**:
+- `# TODO: change this to properly inherit and override` in `RemoveNan()`
+- `# TODO: properly override these in inheritance` in `CreateIndices()`
+- Methods that should be overridden but use conditional logic instead
 
-**Antipatterns:**
-- **Leaky Abstraction**: Internal representation (DataFrame) leaks to API
-- **Impedance Mismatch**: Using DataFrames for numerical operations when numpy arrays would be more efficient
-- **Dependency Hell**: Tight coupling to pandas makes the library harder to maintain and test
+**Impact**: Technical debt, inconsistent architecture, methods not properly specialized
 
-**Impact:**
-- Performance overhead from DataFrame operations
-- Memory usage higher than necessary for numerical computations
-- Difficulty integrating with pure numpy-based workflows
-- Testing complexity increased due to pandas dependency
+## 3. Complex Index Management
+**Location**: EDM.py `CreateIndices()` method
+**Problem**: `# TODO: this is like, 4 levels of index shadowing - needs to be fixed`
+**Issue**: Overly complex index management with multiple levels of indirection
+**Impact**: Hard to understand, maintain, and debug; potential for index-related bugs
 
-## 2. MIXED PARADIGMS (OOP + PROCEDURAL)
+## 4. Inconsistent Architecture Pattern
+**Location**: CCM.py, Multiview.py vs Simplex.py, SMap.py
+**Problem**: Mixed use of inheritance (Simplex, SMap) and composition (CCM, Multiview)
+**Issue**: CCM and Multiview contain Simplex instances rather than inheriting from EDM
+**Impact**: Inconsistent design pattern, code duplication, harder to maintain
 
-### Problem:
-The codebase mixes object-oriented and procedural programming styles inconsistently.
+## 5. Excessive Print Statements with Flush
+**Location**: EDM.py validation methods
+**Problem**: Multiple `print(..., flush=True)` statements for verbose output
+**Issue**: Debugging/verbose output mixed with core logic
+**Impact**: Clutters code, hard to separate logging from business logic
 
-**Evidence:**
-- `EDM.py` is an OOP class with methods
-- `API.py` contains standalone functions that create and use EDM objects
-- `Embed.py` has a standalone function rather than being a method
-- Some functionality is split between classes and modules
+## 6. Magic Numbers and Hardcoded Values
+**Location**: Throughout EDM.py
+**Problem**: Hardcoded values like `1E-6`, `20`, `5` without explanation
+**Examples**:
+- `minWeight = 1E-6` in projection calculations
+- `leafsize = 20` in KDTree creation
+- `xRadKnnFactor = 5` for exclusion radius adjustment
 
-**Antipatterns:**
-- **Incomplete OOP**: Not fully embracing OOP principles
-- **God Class**: EDM class has too many responsibilities (data storage, validation, embedding, neighbor search)
-- **Feature Envy**: Methods in one class use data from another class
+**Impact**: Makes code harder to understand and configure
 
-**Impact:**
-- Code organization is confusing
-- Hard to maintain and extend
-- Violates Single Responsibility Principle
+## 7. Overly Complex Method Implementation
+**Location**: EDM.py `FindNeighbors()` method
+**Problem**: Single method handles multiple complex responsibilities
+**Issues**:
+- KDTree creation and querying
+- Neighbor distance calculations
+- Exclusion radius handling
+- Multiple validation checks
+- Complex index mapping logic
 
-## 3. POOR TYPE HINTING
+**Impact**: Violates Single Responsibility Principle, hard to test and maintain
 
-### Problem:
-Lack of type hints makes the code harder to understand and maintain.
+## 8. Inconsistent Parameter Handling
+**Location**: Across all classes
+**Problem**: Mix of parameter objects and direct attribute assignment
+**Issue**: Some classes use dataclass parameters, others use direct assignment
+**Impact**: Inconsistent API, harder to understand parameter flow
 
-**Evidence:**
-- No type hints in function signatures
-- Return types not documented
-- Parameter types not specified
-- Only recent addition: `self.Embedding :numpy.ndarray` in EDM.py (incomplete)
+## 9. Poor Separation of Concerns
+**Location**: EDM.py `FormatProjection()` method
+**Problem**: Handles time conversion, projection formatting, and SMap-specific logic
+**Issue**: Mixes concerns that should be separate methods/classes
+**Impact**: Hard to modify one aspect without affecting others
 
-**Antipatterns:**
-- **Magic Strings**: Column names passed as strings without type safety
-- **Implicit Interfaces**: Function signatures don't document expected types
+## 10. Inefficient Data Copying
+**Location**: Simplex.py and SMap.py `Generate()` methods
+**Problem**: Comment `# JP : for big data this is likely not efficient`
+**Issue**: Data copying in generation loops may impact performance
+**Impact**: Potential performance bottleneck for large datasets
 
-**Impact:**
-- IDE support limited
-- Harder to catch type errors
-- Documentation incomplete
-- Developer experience poor
+## 11. Incomplete Error Handling
+**Location**: Various methods
+**Problem**: Some error conditions raise exceptions, others use warnings
+**Issue**: Inconsistent error handling strategy
+**Impact**: Unpredictable behavior for edge cases
 
-## 4. CIRCULAR DEPENDENCIES
+## 12. Overuse of Instance Variables
+**Location**: EDM class
+**Problem**: Large number of instance variables (50+ in EDM base class)
+**Issue**: Class has too much state, hard to track variable usage
+**Impact**: Increased complexity, potential for bugs from state management
 
-### Problem:
-Modules import from each other, creating dependency cycles.
+## Recommended Refactoring Priorities
 
-**Evidence:**
-- `EDM.py` imports from `Embed` and `API`
-- `API.py` likely imports from `EDM`
-- `Simplex.py` and `SMap.py` inherit from `EDM`
-- `Neighbors.py` is imported as a method in `EDM`
-
-**Antipatterns:**
-- **Circular Dependency**: Modules depend on each other
-- **Import Starvation**: Hard to determine proper import order
-
-**Impact:**
-- Code organization difficult
-- Testing challenging
-- Refactoring risky
-
-## 5. INCONSISTENT NAMING CONVENTIONS
-
-### Problem:
-Inconsistent naming makes code harder to read and understand.
-
-**Evidence:**
-- `dataFrame` vs `data` parameter names
-- `E` vs `embeddingDimensions`
-- `tau` vs `stepSize`
-- `lib_i` vs `pred_i` (inconsistent with `predList`)
-- Mixed camelCase and snake_case
-
-**Antipatterns:**
-- **Inconsistent Naming**: No clear naming convention
-- **Hungarian Notation**: `lib_i`, `pred_i` suggest type in name
-
-**Impact:**
-- Code readability suffers
-- Learning curve increased
-- Maintenance difficult
-
-## 6. MAGIC NUMBERS AND STRINGS
-
-### Problem:
-Hard-coded values and strings throughout the code.
-
-**Evidence:**
-- Column index 0 assumed to be time: `self.Data.iloc[:, 0]`
-- String literals for column names without validation
-- Hard-coded shift values in embedding
-- Magic numbers in validation logic
-
-**Antipatterns:**
-- **Magic Numbers**: Unnamed numeric constants
-- **Stringly Typed**: Using strings for what should be structured data
-
-**Impact:**
-- Code fragile and error-prone
-- Hard to maintain
-- Documentation incomplete
-
-## 7. LACK OF IMMUTABILITY
-
-### Problem:
-Objects are mutated extensively after creation.
-
-**Evidence:**
-- `self.Embedding` is set after object creation
-- `self.lib_i`, `self.pred_i` modified in place
-- Methods like `RemoveNan()` mutate object state
-- No copy-on-write or defensive copying
-
-**Antipatterns:**
-- **Object Mutator**: Objects changed after creation
-- **Hidden Side Effects**: Methods modify state unexpectedly
-
-**Impact:**
-- Hard to reason about code
-- Testing difficult
-- Thread safety issues
-
-## 8. INCONSISTENT ERROR HANDLING
-
-### Problem:
-Error handling is inconsistent across the codebase.
-
-**Evidence:**
-- Some methods raise RuntimeError
-- Some use warnings.warn()
-- Some return None or empty results on error
-- Inconsistent error messages
-
-**Antipatterns:**
-- **Inconsistent Exceptions**: Different exception types for similar errors
-- **Silent Failures**: Some errors not properly reported
-
-**Impact:**
-- Error handling unpredictable
-- Debugging difficult
-- User experience inconsistent
-
-## 9. LACK OF MODULARITY IN EMBEDDING
-
-### Problem:
-Embedding logic is scattered and not well-encapsulated.
-
-**Evidence:**
-- `Embed.py` has standalone function
-- `EDM.EmbedData()` calls `Embed()` function
-- Embedding happens in multiple places
-- No clear single source of truth for embedding
-
-**Antipatterns:**
-- **Scattered Functionality**: Embedding logic not centralized
-- **Duplicate Code**: Similar embedding logic in different places
-
-**Impact:**
-- Hard to maintain embedding logic
-- Inconsistent behavior possible
-- Testing difficult
-
-## 10. POOR SEPARATION OF CONCERNS
-
-### Problem:
-Classes and functions handle multiple responsibilities.
-
-**Evidence:**
-- `EDM` class handles data storage, validation, embedding, neighbor search
-- `API.py` mixes high-level API with implementation details
-- Functions do multiple things (e.g., validation + computation)
-
-**Antipatterns:**
-- **God Object**: EDM class does too much
-- **Fat Function**: Functions have multiple responsibilities
-
-**Impact:**
-- Violates Single Responsibility Principle
-- Hard to test and maintain
-- Code organization confusing
-
-## RECOMMENDATIONS
-
-1. **Decouple from pandas**: Use numpy arrays as primary data structure
-2. **Add comprehensive type hints**: Improve code documentation and IDE support
-3. **Refactor into smaller classes**: Break EDM into smaller, focused classes
-4. **Centralize embedding logic**: Create a proper Embedding class
-5. **Standardize naming conventions**: Use consistent snake_case throughout
-6. **Add immutability**: Create copies when needed, avoid in-place mutations
-7. **Improve error handling**: Consistent exception types and messages
-8. **Remove circular dependencies**: Restructure imports
-9. **Add proper documentation**: Docstrings for all public functions
-10. **Create clear interfaces**: Define what each module exports
+1. **High Priority**: Fix type checking anti-pattern (name parameter issue)
+2. **High Priority**: Complete proper inheritance implementation
+3. **Medium Priority**: Simplify complex index management
+4. **Medium Priority**: Standardize architecture (inheritance vs composition)
+5. **Low Priority**: Extract constants for magic numbers
+6. **Low Priority**: Split complex methods into smaller, focused methods
