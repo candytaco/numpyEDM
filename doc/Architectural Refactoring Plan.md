@@ -673,17 +673,17 @@ Clean, intuitive API with no namespace conflicts:
 from pyEDM import FitSimplex, EDMParameters, DataSplit
 
 params = EDMParameters(
-   data = my_data,
-   embedDimensions = 3,
-   target = 1,
-   predictionHorizon = 1
+	data = my_data,
+	embedDimensions = 3,
+	target = 1,
+	predictionHorizon = 1
 )
 
 split = DataSplit(train = [1, 100], test = [101, 200])
 
 # Create and run model
 model = FitSimplex(params, split)
-result = model.run()
+result = model.Run()
 
 # Access results
 print(f"Correlation: {result.compute_error()['correlation']}")
@@ -694,13 +694,13 @@ from pyEDM import plot_prediction
 plot_prediction(result)
 
 # ---- More compact usage ----
-result = FitSimplex(params, split).run()
+result = FitSimplex(params, split).Run()
 
 # ---- SMap example ----
 from pyEDM import FitSMap, SMapParameters
 
 smap_params = SMapParameters(theta = 2.0)
-smap_result = FitSMap(params, split, smap_params).run()
+smap_result = FitSMap(params, split, smap_params).Run()
 
 # Access SMap-specific results
 coefficients = smap_result.coefficients
@@ -711,27 +711,27 @@ from pyEDM import FitCCM, CCMParameters
 
 ccm_params = CCMParameters(trainSizes = [10, 50, 10], sample = 100)
 ccm_model = FitCCM(params, ccm_params)
-ccm_result = ccm_model.run()
+ccm_result = ccm_model.Run()
 plot_ccm(ccm_result)
 
 # ---- Multiview example ----
 from pyEDM import FitMultiview, MultiviewParameters
 
 mv_params = MultiviewParameters(D = 3, trainLib = False)
-mv_result = FitMultiview(params, split, mv_params).run()
+mv_result = FitMultiview(params, split, mv_params).Run()
 print(mv_result.view)  # Rankings
 
 # ---- With execution control ----
 from pyEDM import ExecutionMode
 
 params_with_execution = EDMParameters(
-   data = my_data,
-   embedDimensions = 3,
-   execution = ExecutionMode.MULTIPROCESS,
-   numProcess = 8
+	data = my_data,
+	embedDimensions = 3,
+	execution = ExecutionMode.MULTIPROCESS,
+	numProcess = 8
 )
 
-result = FitSimplex(params_with_execution, split).run()
+result = FitSimplex(params_with_execution, split).Run()
 ```
 
 #### Benefits
