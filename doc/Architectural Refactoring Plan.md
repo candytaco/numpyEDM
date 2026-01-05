@@ -686,7 +686,7 @@ model = FitSimplex(params, split)
 result = model.Run()
 
 # Access results
-print(f"Correlation: {result.compute_error()['correlation']}")
+print(f"Correlation: {result.compute_error()}")
 
 # Plot if desired
 from pyEDM import plot_prediction
