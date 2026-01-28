@@ -196,7 +196,7 @@ def _evaluate_batch_shared(dummy, batch: List[int], shm_all_name: str,
 		neighborFinder.distanceMatrix = distances
 		neighborFinder.numNeighbors = simplex.knn_
 		knn_distances, knn_neighbors = neighborFinder.requery()
-		simplex.knn_distances, simplex.knn_neighbors = simplex.MapKNNIndicesToData(knn_neighbors, knn_distances)
+		simplex.knn_distances, simplex.knn_neighbors = simplex.MapKDtreeKNNIndicesToData(knn_neighbors, knn_distances)
 		simplex.Project()
 		simplex.FormatProjection()
 
@@ -629,7 +629,7 @@ class MDE:
 			neighborFinder.distanceMatrix = distances
 			neighborFinder.numNeighbors = simplex.knn_
 			knn_distances, knn_neighbors = neighborFinder.requery()
-			simplex.knn_distances, simplex.knn_neighbors = simplex.MapKNNIndicesToData(knn_neighbors, knn_distances)
+			simplex.knn_distances, simplex.knn_neighbors = simplex.MapKDtreeKNNIndicesToData(knn_neighbors, knn_distances)
 			simplex.Project()
 			simplex.FormatProjection()
 			res = SimplexResult(projection = simplex.Projection,

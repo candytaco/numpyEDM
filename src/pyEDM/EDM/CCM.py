@@ -275,7 +275,7 @@ class CCM:
 					mask[rng_i] = False
 					d[mask, :] = numpy.inf # artificially make all the other ones far awa
 					neighbor_distances, raw_indices = PairwiseDistanceNeighborFinder.find_neighbors(d, S.knn)
-					neighbor_indices = S._MapKNNIndicesToLibraryIndices(raw_indices)
+					neighbor_indices = S.MapKNNIndicesToLibraryIndices(raw_indices)
 
 				# Code from Simplex:Project ---------------------------------
 				# First column is minimum distance of all N test rows

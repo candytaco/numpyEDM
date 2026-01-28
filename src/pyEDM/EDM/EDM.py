@@ -157,16 +157,16 @@ class EDM:
 		# Only need index mapping now (no filtering)
 		if self.KDTree:
 			# KDTree still needs full MapKNNIndicesToData
-			self.knn_distances, self.knn_neighbors = self.MapKNNIndicesToData(
+			self.knn_distances, self.knn_neighbors = self.MapKDtreeKNNIndicesToData(
 				knn_neighbors, knn_distances
 			)
 		else:
 			# Matrix-based only needs index mapping
-			self.knn_neighbors = self._MapKNNIndicesToLibraryIndices(knn_neighbors)
+			self.knn_neighbors = self.MapKNNIndicesToLibraryIndices(knn_neighbors)
 			self.knn_distances = knn_distances
 
 
-	def MapKNNIndicesToData(self, raw_neighbors, raw_distances):
+	def MapKDtreeKNNIndicesToData(self, raw_neighbors, raw_distances):
 		"""
 		Processes raw KDTree results through index mapping and neighbor filtering.
 		
@@ -183,7 +183,7 @@ class EDM:
 			raw_neighbors = raw_neighbors[:, None]
 		
 		# Step 1: Map KDTree indices to actual data indices
-		knn_neighbors = self._MapKNNIndicesToLibraryIndices(raw_neighbors)
+		knn_neighbors = self.MapKNNIndicesToLibraryIndices(raw_neighbors)
 		knn_distances = raw_distances
 		
 		# Step 2: Remove degenerate neighbors (leave-one-out)
@@ -198,7 +198,7 @@ class EDM:
 		
 		return knn_distances, knn_neighbors
 
-	def _MapKNNIndicesToLibraryIndices(self, raw_neighbors):
+	def MapKNNIndicesToLibraryIndices(self, raw_neighbors):
 		"""
 		Maps KDTree indices (0-based) to actual library data row indices.
 		
