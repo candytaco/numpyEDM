@@ -77,16 +77,21 @@ class PairwiseDistanceNeighborFinder(NeighborFinderBase):
 
 	def __init__(self, 
 				 data: np.ndarray, 
-				 x: Optional[np.ndarray] = None):
+				 x: Optional[np.ndarray] = None,
+				 exclusion: Optional[np.ndarray] = None):
 		"""
 
 		:param data: data
 		:param x: 	data that we might want to query
+		:param exclusion:	neighbor exclusion mask - True entries are ignored for neighbor-finding
 		"""
 		super().__init__(data)
 		self.distanceMatrix = None
+		self.mask = exclusion
 		if x is not None:
 			self.distanceMatrix = distance.cdist(data, x, 'sqeuclidean')
+			if self.mask is not None:
+				self.distanceMatrix[self.mask] = np.inf
 		self.numNeighbors = None
 
 	def requery(self):
@@ -111,4 +116,6 @@ class PairwiseDistanceNeighborFinder(NeighborFinderBase):
 		self.numNeighbors = k
 		if x is not None:
 			self.distanceMatrix = distance.cdist(self.data, x, 'sqeuclidean')
+			if self.mask is not None:
+				self.distanceMatrix[self.mask] = np.inf
 		return PairwiseDistanceNeighborFinder.find_neighbors(self.distanceMatrix, self.numNeighbors)
