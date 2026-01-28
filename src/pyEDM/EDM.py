@@ -602,8 +602,8 @@ class EDM:
 
         # Remove extra column if not doing exclusion radius filtering
         if not self.exclusionRadius_knn:
-            knn_distances = np.delete(knn_distances, self.knn, axis = 1)
-            knn_neighbors = np.delete(knn_neighbors, self.knn, axis = 1)
+            knn_distances = knn_distances[:, :-1]
+            knn_neighbors = knn_neighbors[:, :-1]
 
         return knn_neighbors, knn_distances
 
