@@ -664,6 +664,44 @@ class EDM:
         return knn_neighbors, knn_distances
 
 
+    def _build_exclusion_mask(self):
+        """
+        Pre-compute boolean exclusion mask for pairwise distance neighbor queries.
+        Encodes both degenerate neighbors (libOverlap) and exclusionRadius.
+    
+        :returns: (n_pred, n_lib) where True = exclude neighbor
+        """
+    
+        n_pred = len(self.pred_i)
+        n_lib = len(self.lib_i)
+        mask = np.zeros((n_lib, n_pred), dtype = bool)
+        if not self.libOverlap and not self.CheckExclusion:
+            return mask
+    
+        # Initialize mask: False = include neighbor
+    
+        # Build index lookup for library
+        lib_index_map = {index: i for i, index in enumerate(self.lib_i)}
+    
+        for i, pred_index in enumerate(self.pred_i):
+            # Handle degenerate neighbors (leave-one-out)
+            if self.libOverlap and pred_index in lib_index_map:
+                lib_pos = lib_index_map[pred_index]
+                mask[lib_pos, i] = True
+    
+            # Handle exclusion radius
+            if self.CheckExclusion:
+                rowLow = max(np.min(self.lib_i), pred_index - self.exclusionRadius)
+                rowHi = min(np.max(self.lib_i), pred_index + self.exclusionRadius)
+    
+                # Mark all library indices in exclusion window
+                for lib_i, lib_idx in enumerate(self.lib_i):
+                    if rowLow <= lib_idx <= rowHi:
+                        mask[lib_i, i] = True
+    
+        return mask
+
+
     def FindNeighbors(self):
         # --------------------------------------------------------------------
         '''Find neighbors in the lib set for the pred set
