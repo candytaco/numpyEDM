@@ -12,13 +12,15 @@ from the divergence list.
 
 ## Window mapping (used by every comparison)
 
-torchEDM windows are 0-based, half-open `[start, stop)` pairs — flat lists
-and strings are rejected. Reference `lib=[a,b], pred=[c,d]` (1-offset
-inclusive; the horizon trims the last library row) is reproduced by the class
-API as `train=[(a-1, b-1)], test=[(c-1, d)]`, and through `MDEFitter.Fit` by
-splitting the series at `c-1`: `XTrain = rows a-1..c-2`, `XTest = rows
-c-1..d`, `Fit(..., TrainEnd=1, TestEnd=1)`. Verified: both sides use train
-rows 0..298, test rows 300..599 on the Fly windows. [01]
+torchEDM takes `X_train/Y_train/X_test/Y_test` arrays. A training state is
+any row whose history is complete and whose horizon-shifted target lies inside
+the array; `Y_pred` has `Y_test`'s shape with NaN where no complete state
+predicts the row, and a NaN entry of `Y_test` is predicted but never scored.
+Reference `lib=[a,b], pred=[c,d]` (1-offset inclusive) is reproduced by
+`X_train = rows a-1..b-1` and `X_test = rows c-1-h..d`, where `h` is the
+deepest history span, with the `Y_test` entries before row `c` set to NaN.
+Verified: both sides use training states 0..298 and scored test states
+300..599 on the Fly windows. [01]
 
 ## Components verified equivalent
 

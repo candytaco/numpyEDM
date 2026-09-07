@@ -1,7 +1,7 @@
 # MDE verification against the reference package
 
 Scripts replicating the findings in [`REPORT.md`](REPORT.md): torchEDM's MDE
-(via the sklearn-like `MDEFitter` API) compared against the reference
+(via the `MDEFitter` wrapper) compared against the reference
 implementation [pao-unit/MDE](https://github.com/pao-unit/MDE) (`dimx`,
 pyEDM-based).
 

@@ -1,241 +1,126 @@
 """
-Visualization functions for results.
-These plotting functions are mostly factored out of the pyEDM math functions
-to separate the math and visualization
+Plots of predictions and sweeps. Rows are sample positions; there is no time axis.
 """
+from typing import Optional, Union
 
 import matplotlib.pyplot as plt
-from matplotlib.pyplot import show, axhline
-from typing import Union
 import numpy as np
 
-def plot_prediction(result: Union['SimplexResult', 'SMapResult', 'MultiviewResult', np.ndarray],
-				   title: str = "",
-				   embedDimensions: int = None,
-				   predictionHorizon: int = None,
-				   block: bool = True):
-	"""
-	Plot observations vs predictions.
 
-	:param result: Result object or legacy numpy array with columns [Time, Observations, Predictions]
-	:param title: Additional title text
-	:param embedDimensions: Embedding dimension (only needed if passing numpy array)
-	:param predictionHorizon: Prediction horizon (only needed if passing numpy array)
-	:param block: Whether to block execution when showing plot
+def _FirstRun(arrays):
+	return arrays[0] if isinstance(arrays, list) else arrays
+
+
+def _Column(values, column = 0):
+	values = np.asarray(values)
+	return values if values.ndim == 1 else values[:, column]
+
+
+def plot_prediction(Y_true: np.ndarray, Y_pred, title: str = "", block: bool = True):
+	"""
+	Observations and predictions against row index, with correlation and RMSE in the title.
+
+	:param Y_true:	[nRows] or [nRows, nTargets]; the first target is plotted
+	:param Y_pred:	a result record with Y_pred, or an array shaped like Y_true (the first run of a list)
 	"""
 	from .Scoring import Correlation, RootMeanSquareError
-
-	# Handle both Result objects and numpy arrays
-	if hasattr(result, 'projection'):
-		# It's a Result object
-		data = result.projection
-		E = result.embedDimensions
-		Tp = result.predictionHorizon
-	else:
-		# It's a numpy array (legacy)
-		data = result
-		E = embedDimensions or 0
-		Tp = predictionHorizon or 0
-
-	# Compute error statistics
-	corr = Correlation(data[:, 1], data[:, 2])
-	RMSE = RootMeanSquareError(data[:, 1], data[:, 2])
-
-	# Build title
-	plot_title = title
-	if plot_title:
-		plot_title += "\n"
-	plot_title += f"Embedding Dims = {E}  predictionHorizon={Tp}  " \
-				  f"correlation={round(corr, 3)}  " \
-				  f"RMSE={round(RMSE, 3)}"
-
-	# Create plot
+	predicted = _Column(_FirstRun(getattr(Y_pred, 'Y_pred', Y_pred)))
+	actual = _Column(_FirstRun(Y_true))
+	corr = Correlation(actual, predicted)
+	rmse = RootMeanSquareError(actual, predicted)
+	plot_title = (title + "\n" if title else "") + f"correlation={corr}  RMSE={rmse}"
 	plt.figure()
-	plt.plot(data[:, 0], data[:, 1], label='Observations', linewidth=3)
-	plt.plot(data[:, 0], data[:, 2], label='Predictions', linewidth=3)
+	rows = np.arange(len(actual))
+	plt.plot(rows, actual, label = 'Observations', linewidth = 3)
+	plt.plot(rows, predicted, label = 'Predictions', linewidth = 3)
+	plt.xlabel('Row')
 	plt.title(plot_title)
 	plt.legend()
-	plt.show(block=block)
+	plt.show(block = block)
 
-def plot_smap_coefficients(result: Union['SMapResult', np.ndarray],
-						  title: str = "",
-						  embedDimensions: int = None,
-						  predictionHorizon: int = None,
-						  block: bool = True):
+
+def plot_smap_coefficients(result, title: str = "", block: bool = True):
 	"""
-	Plot S-Map coefficients over time.
+	Each coefficient of the locally weighted linear map against row index, first target.
 
-	:param result: SMap result object or legacy numpy array with columns [Time, Coeff_0, Coeff_1, ...]
-	:param title: Additional title text
-	:param embedDimensions: Embedding dimension (only needed if passing numpy array)
-	:param predictionHorizon: Prediction horizon (only needed if passing numpy array)
-	:param block: Whether to block execution when showing plot
+	:param result:	an SMapResult, or an array [nRows, stateSize + 1] (or [nRows, stateSize + 1, nTargets])
 	"""
-	# Handle both SMapResult and numpy arrays
-	if hasattr(result, 'coefficients'):
-		# It's an SMapResult object
-		data = result.coefficients
-		E = result.embedDimensions
-		Tp = result.predictionHorizon
-	else:
-		# It's a numpy array (legacy)
-		data = result
-		E = embedDimensions or 0
-		Tp = predictionHorizon or 0
-
-	# Build title
-	plot_title = title
-	if plot_title:
-		plot_title += "\n"
-	plot_title += f"Embedding Dims = {E}  predictionHorizon={Tp}  S-Map Coefficients"
-
-	# Create subplots for each coefficient
-	n_coeff = data.shape[1] - 1 if data.shape[1] > 1 else data.shape[1]
-
+	coefficients = np.asarray(_FirstRun(getattr(result, 'coefficients', result)))
+	if coefficients.ndim == 3:
+		coefficients = coefficients[:, :, 0]
+	numCoefficients = coefficients.shape[1]
+	rows = np.arange(coefficients.shape[0])
 	plt.figure()
-	for i in range(1, data.shape[1]):
-		plt.subplot(data.shape[1] - 1, 1, i)
-		plt.plot(data[:, 0], data[:, i], linewidth=3)
-		plt.title(f'Coefficient {i-1}')
-
-	plt.suptitle(plot_title)
+	for i in range(numCoefficients):
+		plt.subplot(numCoefficients, 1, i + 1)
+		plt.plot(rows, coefficients[:, i], linewidth = 3)
+		plt.title('Intercept' if i == 0 else f'Coefficient {i}')
+	plt.suptitle((title + "\n" if title else "") + "S-Map Coefficients")
 	plt.tight_layout()
-	plt.show(block=block)
+	plt.show(block = block)
 
-def plot_ccm(result: Union['CCMResult', np.ndarray],
-			title: str = "",
-			embedDimensions: int = None,
-			block: bool = True):
-	"""
-	Plot CCM convergence.
 
-	:param result: CCM result object or legacy numpy array with columns [LibSize, Correlation_1, Correlation_2]
-	:param title: Additional title text
-	:param embedDimensions: Embedding dimension (only needed if passing numpy array)
-	:param block: Whether to block execution when showing plot
+def plot_ccm(result, title: str = "", block: bool = True):
 	"""
-	# Handle both CCMResult and numpy arrays
-	if hasattr(result, 'libMeans'):
-		# It's a CCMResult object
-		data = result.libMeans
-		E = result.embedDimensions
+	Cross-map skill against training-subset size, one line per source (and target).
+
+	:param result:	a BatchedCCMResult, or an array [nSizes, 1 + nLines] with the sizes in column 0
+	"""
+	if hasattr(result, 'forward_performance'):
+		sizes = np.asarray(result.library_sizes)
+		skill = np.asarray(result.forward_performance).reshape(len(sizes), -1)
 	else:
-		# It's a numpy array (legacy)
-		data = result
-		E = embedDimensions or 0
-
-	# Build title
-	plot_title = title or f'E = {E}'
-
+		data = np.asarray(result)
+		sizes, skill = data[:, 0], data[:, 1:]
 	fig, ax = plt.subplots()
-
-	# Check if we have two directions or one
-	if data.shape[1] == 3:
-		# CCM of two different variables
-		ax.plot(data[:, 0], data[:, 1], linewidth=3, label='Direction 1')
-		ax.plot(data[:, 0], data[:, 2], linewidth=3, label='Direction 2')
+	for column in range(skill.shape[1]):
+		ax.plot(sizes, skill[:, column], linewidth = 3, label = f'source {column}' if skill.shape[1] > 1 else None)
+	if skill.shape[1] > 1:
 		ax.legend()
-	elif data.shape[1] == 2:
-		# CCM of degenerate columns (single direction)
-		ax.plot(data[:, 0], data[:, 1], linewidth=3)
+	ax.set(xlabel = "Training-subset size", ylabel = "Cross-map correlation", title = title)
+	plt.axhline(y = 0, linewidth = 1)
+	plt.show(block = block)
 
-	ax.set(xlabel="Library Size",
-		  ylabel="CCM correlation",
-		  title=plot_title)
-	axhline(y=0, linewidth=1)
-	show(block=block)
 
-def plot_multiview(result: Union['MultiviewResult', np.ndarray],
-				  title: str = "",
-				  block: bool = True):
-	"""
-	Plot Multiview ensemble prediction.
+def plot_multiview(Y_true: np.ndarray, result, title: str = "", block: bool = True):
+	"""Ensemble prediction against observations; see plot_prediction."""
+	plot_prediction(Y_true, result, title = title, block = block)
 
-	:param result: Multiview result object or legacy numpy array
-	:param title: Additional title text
-	:param block: Whether to block execution when showing plot
-	"""
-	# Use plot_prediction for the ensemble result
-	if hasattr(result, 'projection'):
-		plot_prediction(result, title=title, block=block)
-	else:
-		plot_prediction(result, title=title, block=block)
 
-# Legacy function names for backward compatibility
-def PlotObsPred(data, dataName="", embedDimensions=0, predictionHorizon=0, block=True):
-	"""
-	Legacy function for plotting observations vs predictions.
-
-	.. deprecated:: Use plot_prediction() instead.
-	"""
-	plot_prediction(data, title=dataName, embedDimensions=embedDimensions,
-				   predictionHorizon=predictionHorizon, block=block)
-
-def PlotCoeff(data, dataName="", embedDimensions=0, predictionHorizon=0, block=True):
-	"""
-	Legacy function for plotting S-Map coefficients.
-
-	.. deprecated:: Use plot_smap_coefficients() instead.
-	"""
-	plot_smap_coefficients(data, title=dataName, embedDimensions=embedDimensions,
-						  predictionHorizon=predictionHorizon, block=block)
-
-def plot_embed_dimension(result: np.ndarray,
-						title: str = "",
-						block: bool = True):
-	"""
-	Plot embedding dimension vs prediction skill.
-
-	:param result: Array with columns [E, correlation]
-	:param title: Plot title
-	:param block: Whether to block execution when showing plot
-	"""
-	plot_title = title or "Embedding Dimension"
-
+def _plot_sweep(result: np.ndarray, xlabel: str, title: str, block: bool):
+	result = np.asarray(result)
 	plt.figure()
-	plt.plot(result[:, 0], result[:, 1], 'o-', linewidth=2, markersize=8)
-	plt.xlabel('Embedding Dimension (E)')
-	plt.ylabel('Prediction Skill (correlation)')
-	plt.title(plot_title)
-	plt.grid(True, alpha=0.3)
-	plt.show(block=block)
+	for column in range(1, result.shape[1]):
+		plt.plot(result[:, 0], result[:, column], 'o-', linewidth = 2, markersize = 8,
+				 label = f'target {column - 1}' if result.shape[1] > 2 else None)
+	if result.shape[1] > 2:
+		plt.legend()
+	plt.xlabel(xlabel)
+	plt.ylabel('Prediction skill')
+	plt.title(title)
+	plt.grid(True, alpha = 0.3)
+	plt.show(block = block)
 
-def plot_predict_interval(result: np.ndarray,
-						 title: str = "",
-						 block: bool = True):
+
+def plot_embed_dimension(result: np.ndarray, title: str = "", block: bool = True):
 	"""
-	Plot prediction interval vs prediction skill.
-
-	:param result: Array with columns [predictionHorizon, correlation]
-	:param title: Plot title
-	:param block: Whether to block execution when showing plot
+	:param result:	[maxDims] scores from FindOptimalEmbeddingDimensionality, or [maxDims, 1 + nTargets] with depth in column 0
 	"""
-	plot_title = title or "Prediction Interval"
+	result = np.asarray(result)
+	if result.ndim == 1:
+		result = np.column_stack([np.arange(1, len(result) + 1), result])
+	_plot_sweep(result, 'History depth (embedDimensions)', title or "History depth", block)
 
-	plt.figure()
-	plt.plot(result[:, 0], result[:, 1], 'o-', linewidth=2, markersize=8)
-	plt.xlabel('Prediction Horizon (Tp)')
-	plt.ylabel('Prediction Skill (correlation)')
-	plt.title(plot_title)
-	plt.grid(True, alpha=0.3)
-	plt.show(block=block)
 
-def plot_predict_nonlinear(result: np.ndarray,
-						  title: str = "",
-						  block: bool = True):
+def plot_predict_interval(result: np.ndarray, title: str = "", block: bool = True):
 	"""
-	Plot theta vs prediction skill for S-Map.
-
-	:param result: Array with columns [theta, correlation]
-	:param title: Plot title
-	:param block: Whether to block execution when showing plot
+	:param result:	[maxTp, 1 + nTargets] from FindOptimalPredictionHorizon
 	"""
-	plot_title = title or "S-Map Localization (theta)"
+	_plot_sweep(result, 'Prediction horizon', title or "Prediction horizon", block)
 
-	plt.figure()
-	plt.plot(result[:, 0], result[:, 1], 'o-', linewidth=2, markersize=8)
-	plt.xlabel('S-Map Localization (theta)')
-	plt.ylabel('Prediction Skill (correlation)')
-	plt.title(plot_title)
-	plt.grid(True, alpha=0.3)
-	plt.show(block=block)
+
+def plot_predict_nonlinear(result: np.ndarray, title: str = "", block: bool = True):
+	"""
+	:param result:	[nTheta, 1 + nTargets] from FindSMapNeighborhood
+	"""
+	_plot_sweep(result, 'Localization (theta)', title or "Localization", block)

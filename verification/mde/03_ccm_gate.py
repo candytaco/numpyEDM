@@ -29,7 +29,7 @@ import pickle
 import numpy as np
 import torch
 
-from common import load_fly, ts_columns, fly_split, FLY_FIT_KWARGS
+from common import load_fly, ts_columns, fly_split
 
 SEED = 7777
 PCTS = [10, 15, 85, 90]
@@ -90,7 +90,7 @@ def main():
                        CCMNumSamples=20, CCMConvergenceThreshold=0.01,
                        CCMSeed=SEED, CCMMaxEmbeddingDimensions=15,
                        dtype=torch.float64, progressBar=False)
-    fitter.Fit(XTrain, YTrain, XTest, YTest, **FLY_FIT_KWARGS)
+    fitter.Fit(XTrain, YTrain, XTest, YTest)
     mde = fitter.MDE
 
     E_match = sum(1 for i, c in enumerate(ts_cols)

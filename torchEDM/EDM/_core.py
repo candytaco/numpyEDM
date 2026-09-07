@@ -1,74 +1,10 @@
-## core functions for torchEDM
+"""
+Tensor kernels shared by every predictor, batched scoring, and the batched neighbor-averaging
+prediction used by the sweeps and the variable selection.
+"""
 from typing import Optional, Union, Callable
 
 import torch
-
-
-def ElementwisePairwiseDistance(a, b, out):
-	"""
-	Pairwise square euclidean distances between elements of a and b
-	along every dimension. Basically an outer subtract.
-	:param a:	[n1 x dims] tensor 1
-	:param b:	[n2 x dims] tensor 2
-	:param out:	out tensor to write to [dims x n1 x n2]
-	"""
-	dims = a.shape[1]
-
-	for v in range(dims):
-		diff = a[:, v].unsqueeze(1) - b[:, v].unsqueeze(0)
-		out[v, :, :] = diff
-	out.square_()
-
-
-def IncrementPairwiseDistance(distances, increments, out):
-	"""
-	For a set of pairwise distances, increment each slice by the same amount
-	i.e. a 2D array broadcast
-	:param distances: 	[dims, n1 x n2] set of pairwise distances
-	:param increments: 	[n1 x n2] increments
-	:param out: 		[dims, n1 x n2] tensor to write into
-	:return:
-	"""
-	out[:, :, :] = distances + increments.unsqueeze(0)
-
-
-def MinAxis1(arr):
-	"""
-	Compute minimum along axis 1 of 3D tensor
-	:param arr: [k x neighbors x dims] tensor
-	:return: [k x dims] minimum values
-	"""
-	return torch.min(arr, dim = 1)[0]
-
-
-def SumAxis1(arr):
-	"""
-	Sum along axis 1 of 3D tensor
-	:param arr: [k x neighbors x dims] tensor
-	:return: [k x dims] sum values
-	"""
-	return torch.sum(arr, dim = 1)
-
-
-def ComputeWeights(neighborDistances, minDistances):
-	"""
-	Compute exponential weights
-	:param neighborDistances: [k x neighbors x dims] distances
-	:param minDistances: [k x dims] minimum distances
-	:return: [k x neighbors x dims] weights
-	"""
-	return torch.exp(-neighborDistances / minDistances.unsqueeze(1))
-
-
-def ComputePredictions(weights, select, weightSum):
-	"""
-	Compute weighted average predictions
-	:param weights: [k x neighbors x dims] weights
-	:param select: [k x neighbors x dims] selected values
-	:param weightSum: [k x dims] sum of weights
-	:return: [k x dims] predictions
-	"""
-	return (weights * select).sum(dim = 1) / weightSum
 
 
 def _promoteDimensions(score_function: Callable[[torch.tensor, torch.tensor, Optional[torch.tensor]], torch.tensor]):
@@ -167,6 +103,151 @@ def R2(target: torch.tensor, predictions: torch.tensor, out: Optional[torch.tens
 
 	return out.squeeze()
 
+# ---------------------------------------------------------------------------
+# Kernels shared by every predictor. Distance matrices are [..., nTrain, nTest]
+# and neighbors run along dim -2, so a batch of matrices [nSources, nTrain, nTest]
+# and a single matrix [nTrain, nTest] go through the same code.
+# ---------------------------------------------------------------------------
+
+def ComputePairwiseDistances(trainStates: torch.Tensor, testStates: torch.Tensor) -> torch.Tensor:
+	"""
+	Euclidean distance from every training state to every test state.
+	:param trainStates:	[nTrain, stateSize]
+	:param testStates:	[nTest, stateSize]
+	:return: [nTrain, nTest]
+	"""
+	return torch.cdist(trainStates, testStates, p = 2)
+
+
+def SelectNearestNeighbors(distanceMatrix: torch.Tensor, numNeighbors: int,
+						   isTieBreakDeterministic: bool = False,
+						   trainRows: Optional[torch.Tensor] = None,
+						   testRows: Optional[torch.Tensor] = None):
+	"""
+	The numNeighbors smallest entries of every test column of a distance matrix.
+
+	:param distanceMatrix:	[..., nTrain, nTest]; excluded pairs hold inf
+	:param numNeighbors:	neighbors kept per test column
+	:param isTieBreakDeterministic:	False: torch.topk, whose ordering of exactly tied
+		distances is unspecified. True: tied distances are ordered by training position,
+		and when trainRows and testRows are given (a shared sample axis, i.e. in-sample),
+		by |testRow - trainRow| first, reproducing the reference selection. Needs a
+		2-D matrix.
+	:param trainRows:	[nTrain] sample positions of the training states on the shared axis
+	:param testRows:	[nTest] sample positions of the test states on the same axis
+	:return: (neighborDistances, neighborIndices), both [..., numNeighbors, nTest], nearest
+		first; indices are positions along the nTrain axis
+	"""
+	if not isTieBreakDeterministic:
+		return torch.topk(distanceMatrix, numNeighbors, dim = -2, largest = False)
+
+	if distanceMatrix.ndim != 2:
+		raise ValueError('Deterministic tie ordering needs a 2-D [nTrain, nTest] distance matrix')
+	nTrain, nTest = distanceMatrix.shape
+	device = distanceMatrix.device
+
+	# Stable argsorts applied in reverse priority: the last sort decides, earlier
+	# sorts settle its ties.
+	order = torch.arange(nTrain, device = device)[:, None].expand(-1, nTest)
+	if trainRows is not None and testRows is not None:
+		trainRows = torch.as_tensor(trainRows, device = device, dtype = torch.long)
+		testRows = torch.as_tensor(testRows, device = device, dtype = torch.long)
+		temporalOffsets = (testRows[None, :] - trainRows[:, None]).abs()
+		order = torch.argsort(trainRows, stable = True)[:, None].expand(-1, nTest)
+		offsetsByOrder = torch.gather(temporalOffsets, 0, order)
+		order = torch.gather(order, 0, torch.argsort(offsetsByOrder, dim = 0, stable = True))
+	distancesByOrder = torch.gather(distanceMatrix, 0, order)
+	selection = torch.gather(order, 0, torch.argsort(distancesByOrder, dim = 0, stable = True))[:numNeighbors, :]
+	return torch.gather(distanceMatrix, 0, selection), selection
+
+
+def ComputeSimplexWeights(neighborDistances: torch.Tensor) -> torch.Tensor:
+	"""
+	Exponential weights exp(-d / dNearest) for the neighbor-averaging predictor.
+	The nearest distance is floored at 1e-6 for the division only; the distances
+	themselves are not altered, so an exact zero-distance neighbor keeps weight 1.
+
+	:param neighborDistances:	[..., k, nTest] Euclidean distances
+	:return: [..., k, nTest] weights, not normalized
+	"""
+	nearest = torch.clamp_min(torch.amin(neighborDistances, dim = -2, keepdim = True), 1e-6)
+	return torch.exp(-neighborDistances / nearest)
+
+
+def ProjectSimplex(weights: torch.Tensor, neighborTargets: torch.Tensor):
+	"""
+	Weighted average of neighbor targets, and the weighted variance around it.
+
+	:param weights:			[..., k, nTest]
+	:param neighborTargets:	[..., k, nTest, nTargets]
+	:return: (predictions, variance), both [..., nTest, nTargets]
+	"""
+	weightSum = weights.sum(dim = -2)[..., None]
+	predictions = (weights[..., None] * neighborTargets).sum(dim = -3) / weightSum
+	deviations = neighborTargets - predictions[..., None, :, :]
+	variance = (weights[..., None] * deviations ** 2).sum(dim = -3) / weightSum
+	return predictions, variance
+
+
+def ComputeSMapWeights(neighborDistances: torch.Tensor, theta: float) -> torch.Tensor:
+	"""
+	Localization weights exp(-theta * d / mean(d)) for the locally linear predictor.
+
+	:param neighborDistances:	[..., k, nTest]
+	:param theta:				0 gives uniform weights (one global linear map)
+	:return: [..., k, nTest]
+	"""
+	if theta == 0:
+		return torch.ones_like(neighborDistances)
+	meanDistance = torch.clamp_min(neighborDistances.mean(dim = -2, keepdim = True), 1e-10)
+	return torch.exp(-theta * neighborDistances / meanDistance)
+
+
+def SolveWeightedLinearMap(weights: torch.Tensor, neighborStates: torch.Tensor,
+						   neighborTargets: torch.Tensor, testStates: torch.Tensor):
+	"""
+	Per test state, solve the weighted least-squares map from neighbor states to
+	neighbor targets (with an intercept) and apply it to the test state.
+	A NaN neighbor target drops that neighbor's equation for that target only.
+
+	:param weights:			[nTest, k]
+	:param neighborStates:	[nTest, k, stateSize]
+	:param neighborTargets:	[nTest, k, nTargets]
+	:param testStates:		[nTest, stateSize]
+	:return: coefficients [nTest, stateSize + 1, nTargets] (intercept first),
+		predictions [nTest, nTargets], variance [nTest, nTargets],
+		singularValues [nTest, stateSize + 1, nTargets] of the weighted design matrices,
+		NaN-padded when k < stateSize + 1
+	"""
+	nTest, k, stateSize = neighborStates.shape
+	nTargets = neighborTargets.shape[-1]
+
+	isFinite = torch.isfinite(neighborTargets)
+	maskedWeights = torch.where(isFinite, weights[:, :, None], torch.zeros_like(neighborTargets))	# [nTest, k, nTargets]
+	maskedTargets = torch.where(isFinite, neighborTargets, torch.zeros_like(neighborTargets))
+
+	# one design matrix per (test state, target): [nTest, nTargets, k, stateSize + 1]
+	weightsByTarget = maskedWeights.permute(0, 2, 1)
+	design = torch.cat([weightsByTarget[..., None],
+						weightsByTarget[..., None] * neighborStates[:, None, :, :]], dim = -1)
+	rightHandSide = (weightsByTarget * maskedTargets.permute(0, 2, 1))[..., None]
+
+	coefficients = torch.linalg.lstsq(design, rightHandSide).solution[..., 0]	# [nTest, nTargets, stateSize + 1]
+	predictions = coefficients[..., 0] + (coefficients[..., 1:] * testStates[:, None, :]).sum(dim = -1)
+
+	residuals = maskedTargets - predictions[:, None, :]
+	weightSum = maskedWeights.sum(dim = 1)
+	variance = (maskedWeights * residuals ** 2).sum(dim = 1) / weightSum
+
+	singularValues = torch.linalg.svdvals(design)	# [nTest, nTargets, min(k, stateSize + 1)]
+	if singularValues.shape[-1] < stateSize + 1:
+		padding = torch.full((nTest, nTargets, stateSize + 1 - singularValues.shape[-1]), float('nan'),
+							 device = design.device, dtype = design.dtype)
+		singularValues = torch.cat([singularValues, padding], dim = -1)
+
+	return coefficients.permute(0, 2, 1), predictions, variance, singularValues.permute(0, 2, 1)
+
+
 def batch_simplex_predict_and_score(distanceMatrices: torch.tensor, numNeighbors: Union[int, torch.tensor],
 									train_y: torch.tensor, test_y: torch.tensor, score_function: Callable,
 									predictions: Optional[torch.tensor] = None,
@@ -232,14 +313,10 @@ def batch_get_simplex_weights(distanceMatrices, numNeighbors, train_indices = No
 		if len(torch.unique(numNeighbors)) < 2:	# Case degenerate vector that could've been an int
 			sharedNeighbors = True
 
-	neighbor_dist, neighbor_indices = torch.topk(distanceMatrices, k, dim = 1,
-												 largest = False)
+	neighbor_dist, neighbor_indices = SelectNearestNeighbors(distanceMatrices, k)
 
-	neighbor_dist.sqrt_()
-	torch.clamp_min(neighbor_dist, 1e-6, out = neighbor_dist)
-	minDistances = torch.amin(neighbor_dist, dim = 1)
-	weights = neighbor_dist / minDistances.unsqueeze(1)
-	weights.neg_().exp_()
+	# the matrices hold squared distances; the weights want Euclidean ones
+	weights = ComputeSimplexWeights(neighbor_dist.sqrt())
 
 	# if different num neighbors per distance matrix, mask the extra ones to 0 weight
 	if not sharedNeighbors:

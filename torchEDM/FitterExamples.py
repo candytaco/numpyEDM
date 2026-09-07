@@ -1,147 +1,48 @@
 """
-Examples demonstrating the sklearn-like wrapper classes
+Examples of the parameter-holding wrappers on the packaged sample data.
 """
-from .Fitters.CCMFitter import CCMFitter
 from .ExampleData import sampleData
+from .Fitters.CCMFitter import CCMFitter
 from .Fitters.MultiviewFitter import MultiviewFitter
-from .Fitters.SMapFitter import SMapFitter
 from .Fitters.SimplexFitter import SimplexFitter
-from .Visualization import (plot_prediction, plot_smap_coefficients, plot_ccm)
+from .Fitters.SMapFitter import SMapFitter
+from .Visualization import plot_prediction, plot_smap_coefficients, plot_ccm
 
 
 def FitterExamples():
 	"""
-	Examples using the new wrapper classes with sklearn-like separate arrays.
+	Every sample array has a time column at index 0, which the predictors never see.
+	The test arrays start two rows before the rows of interest so those rows have history.
 	"""
-
-
-	# Example 1: SimplexWrapper with block_3sp data (embedded = True)
-	print("Example 1: Simplex with block_3sp data (embedded = True)")
-
-	# Split data into separate arrays
+	# 1: three columns as the state, no history stacking
 	data = sampleData["block_3sp"]
-	XTrain = data[1:100, [1, 4, 7]]  # Columns 1, 4, 7 (features), rows 1-99
-	YTrain = data[1:100, [1]]  # Target column 1, rows 1-99
-	XTest = data[100:196, [1, 4, 7]]  # Columns 1, 4, 7, rows 100-195
-	YTest = data[100:196, [1]]  # Target column 1, rows 100-195
+	X_train, Y_train = data[0:100, [1, 4, 7]], data[0:100, 1]
+	X_test, Y_test = data[100:196, [1, 4, 7]], data[100:196, 1]
+	result = SimplexFitter(EmbedDimensions = 1, PredictionHorizon = 1).Fit(X_train, Y_train, X_test, Y_test)
+	plot_prediction(Y_test, result, "Simplex: block_3sp, three columns as the state")
 
-	# Create and run SimplexWrapper
-	simplexWrapper = SimplexFitter(
-		EmbedDimensions = 3,
-		PredictionHorizon = 1,
-		KNN = 0,
-		Step = -1,
-		Verbose = False,
-		Embedded = True
-	)
+	# 2: one column stacked to three copies
+	X_train, Y_train = data[0:100, 1], data[0:100, 1]
+	X_test, Y_test = data[98:196, 1], data[98:196, 1]
+	result = SimplexFitter(EmbedDimensions = 3, PredictionHorizon = 1).Fit(X_train, Y_train, X_test, Y_test)
+	plot_prediction(Y_test, result, "Simplex: block_3sp, one column stacked to depth 3")
 
-	result = simplexWrapper.Fit(XTrain = XTrain,
-								YTrain = YTrain,
-								XTest = XTest,
-								YTest = YTest, )
-	plot_prediction(result.projection, "Simplex: block_3sp embedded", embedDimensions = 3)
+	# 3: ensemble over combinations of the stacked columns
+	X_train, Y_train = data[0:100, [1, 4, 7]], data[0:100, 1]
+	X_test, Y_test = data[98:199, [1, 4, 7]], data[98:199, 1]
+	result = MultiviewFitter(EmbedDimensions = 3, PredictionHorizon = 1, IsRankedInSample = False).Fit(X_train, Y_train, X_test, Y_test)
+	plot_prediction(Y_test, result, "Multiview: block_3sp")
 
-	# Example 2: SimplexWrapper with block_3sp data (embedded = False)
-	print("\nExample 2: Simplex with block_3sp data (embedded = False)")
-
-	data = sampleData["block_3sp"]
-	XTrain = data[1:100, [1]]  # Column 1 only, rows 1-99
-	YTrain = data[1:100, [1]]  # Target column 1, rows 1-99
-	XTest = data[100:191, [1]]  # Column 1 only, rows 105-190
-	YTest = data[100:191, [1]]  # Target column 1, rows 105-190
-
-	simplexWrapper2 = SimplexFitter(
-		EmbedDimensions = 3,
-		PredictionHorizon = 1,
-		KNN = 0,
-		Step = -1,
-		Verbose = False,
-		Embedded = False,
-	)
-
-	result = simplexWrapper2.Fit(XTrain = XTrain,
-								 YTrain = YTrain,
-								 XTest = XTest,
-								 YTest = YTest,
-								 TestStart = 5,  # the first 5 samples are to provide a history for the first real test sample
-								 )
-	plot_prediction(result.projection, "Simplex: block_3sp", embedDimensions = 3)
-
-	# Example 3: MultiviewWrapper with block_3sp data
-	print("\nExample 3: Multiview with block_3sp data")
-
-	data = sampleData["block_3sp"]
-	XTrain = data[1:101, [1, 4, 7]]  # Columns 1, 4, 7, rows 1-100
-	YTrain = data[1:101, [1]]  # Target column 1, rows 1-100
-	XTest = data[101:199, [1, 4, 7]]  # Columns 1, 4, 7, rows 101-198
-	YTest = data[101:199, [1]]  # Target column 1, rows 101-198
-
-	multiviewWrapper = MultiviewFitter(
-		dimensions = 0,
-		EmbedDimensions = 3,
-		PredictionHorizon = 1,
-		KNN = 0,
-		Step = -1,
-		NumMultiview = 0,
-		ExclusionRadius = 0,
-		TrainLib = False,
-		ExcludeTarget = False,
-		Verbose = False
-	)
-
-	result = multiviewWrapper.Fit(XTrain = XTrain,
-								  YTrain = YTrain,
-								  XTest = XTest,
-								  YTest = YTest, )
-	plot_prediction(result.projection, "Multiview: block_3sp", embedDimensions = 3)
-
-	# Example 4: SMapWrapper with circle data
-	print("\nExample 4: SMap with circle data")
-
+	# 4: locally weighted linear map on two columns
 	data = sampleData["circle"]
-	XTrain = data[1:101, [1, 2]]  # Columns 1-2 (features), rows 1-100
-	YTrain = data[1:101, [1]]  # Target column 1, rows 1-100
-	XTest = data[101:201, [1, 2]]  # Columns 1-2, rows 110-190
-	YTest = data[101:201, [1]]  # Target column 1, rows 110-190
+	X_train, Y_train = data[0:100, [1, 2]], data[0:100, 1]
+	X_test, Y_test = data[100:190, [1, 2]], data[100:190, 1]
+	result = SMapFitter(EmbedDimensions = 1, PredictionHorizon = 1, Theta = 4.0).Fit(X_train, Y_train, X_test, Y_test)
+	plot_prediction(Y_test, result, "S-Map: circle")
+	plot_smap_coefficients(result, "S-Map coefficients: circle")
 
-	# note SMAP appears to have some sort of tail-of-data problems and needs additional
-	# data beyond the end of the test data
-
-	smapWrapper = SMapFitter(
-		EmbedDimensions = 2,
-		PredictionHorizon = 1,
-		KNN = 0,
-		Step = -1,
-		Theta = 4,
-		Verbose = False,
-		Embedded = True,
-	)
-
-	result = smapWrapper.Fit(XTrain = XTrain,
-							 YTrain = YTrain,
-							 XTest = XTest,
-							 YTest = YTest,
-							 TestStart = 9,
-							 TestEnd = 10,)
-	plot_prediction(result.projection, "SMap: circle", embedDimensions = 2)
-	plot_smap_coefficients(result.coefficients, "SMap Coefficients", embedDimensions = 2)
-
-	# Example 5: CCMWrapper with sardine_anchovy_sst data
-	print("\nExample 5: CCM with sardine_anchovy_sst data")
-
+	# 5: cross-map skill of anchovy onto sea-surface temperature across training-subset sizes
 	data = sampleData["sardine_anchovy_sst"]
-	XTrain = data[:, [1]]  # Column 1 (sardine), all rows
-	YTrain = data[:, [4]]  # Target is same
-
-	ccmWrapper = CCMFitter(
-		TrainSizes = [10, 70, 10],
-		numRepeats = 50,
-		EmbedDimensions = 3,
-		PredictionHorizon = 0,
-		Verbose = False
-	)
-
-	result = ccmWrapper.Fit(
-		XTrain = XTrain,
-		YTrain = YTrain,)
-	plot_ccm(result, "CCM: sardine anchovy sst", embedDimensions = 3)
+	result = CCMFitter(TrainSizes = [10, 20, 30, 40, 50, 60, 70, 75], numRepeats = 50, EmbedDimensions = 3,
+					   PredictionHorizon = 0, progressBar = False).Fit(data[:, 1], data[:, 4])
+	plot_ccm(result, "CCM: anchovy -> sst")

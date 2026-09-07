@@ -1,7 +1,11 @@
 """
-Contains the objects that actually implement the EDM math stuff.
-Shouldn't really be directly used. Instead, two sets of wrappers
-are provided in the top-level directory:
-- Functions.py: the pyEDM-style function calls
-- Fitters: OOP fitters with explicit train/test and X/Y splits
+The prediction core: array-in, array-out functions and the drivers built on them.
+
+- Predictors: SimplexPredict, SimplexGenerate, SMapPredict, SMapGenerate
+- Multiview: MultiviewPredict
+- ConvergentCrossMap: cross-map skill of many source columns across training-subset sizes
+- MDE: greedy variable selection
+- Setup: turning X/Y arrays into training pairs and test states
+- _core: the tensor kernels every predictor shares
+- Results: the result records and ResultsIO
 """

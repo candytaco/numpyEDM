@@ -1,30 +1,34 @@
-from typing import List, Tuple, Union
+"""
+Greedy variable selection (manifold dimensional expansion): candidate columns of X are
+added one at a time to the state that predicts each target, keeping the candidate whose
+addition scores best, optionally gated by a cross-map convergence test.
+"""
+from typing import List, Optional, Tuple, Union
 
 import numpy
 import torch
 from tqdm import tqdm as ProgressBar
 
 from .ConvergentCrossMap import ConvergentCrossMap
-from .Results import MDEResult, SimplexResult
-from .SMap import SMap
-from .Simplex import Simplex
-from ._core import Correlation, R2, batch_simplex_predict_and_score, batch_simplex_predict
+from .Predictors import SimplexPredict, SMapPredict, ResolveDevice
+from .Results import MDEResult
+from .Setup import ArrayOrRuns, AsRuns, IsListOfRuns, PreparePrediction, TestTargets
+from ._core import Correlation, R2, batch_simplex_predict_and_score
+from ..Scoring import Correlation as ScoringCorrelation
 
 
 class MDE:
-	"""Manifold dimensional expansion for variable selection.
-
-	This class implements the iterative variable selection algorithm that
-	evaluates combinations of variables using EDM methods and selects the
-	best performing variables based on convergence criteria.
-
-	Supports multiple simultaneous target variables. Each target independently
-	selects the best combination of X variables to predict it.
+	"""
+	Each target independently selects up to maxD columns of X. The state of a candidate set
+	is those columns as given (no history stacking); the horizon shift applies. Several
+	targets are handled together, sharing the candidate distance computations.
 	"""
 
 	def __init__(self,
-				 data: numpy.ndarray,
-				 target: Union[int, List[int]],
+				 X_train: ArrayOrRuns,
+				 Y_train: ArrayOrRuns,
+				 X_test: Optional[ArrayOrRuns] = None,
+				 Y_test: Optional[ArrayOrRuns] = None,
 				 maxD: int = 5,
 				 include_target: bool = False,
 				 convergent = 'post',
@@ -32,18 +36,13 @@ class MDE:
 				 batch_size: int = 1000,
 				 dtype: torch.dtype = torch.float32,
 				 columns = None,
-				 train = None,
-				 test = None,
-				 embedDimensions = 0,
-				 predictionHorizon = 0,
-				 knn = 0,
-				 step = -1,
-				 exclusionRadius = 0,
-				 embedded = False,
-				 validLib = None,
-				 noTime = False,
-				 ignoreNan = True,
-				 verbose = False,
+				 embedDimensions: int = 0,
+				 predictionHorizon: int = 1,
+				 knn: int = 0,
+				 step: int = -1,
+				 exclusionRadius: int = 0,
+				 trainRowMask: Optional[ArrayOrRuns] = None,
+				 verbose: bool = False,
 				 useSMap: bool = False,
 				 theta: float = 0.0,
 				 stdThreshold: float = 1e-3,
@@ -55,92 +54,85 @@ class MDE:
 				 MinPredictionThreshold: float = 0.0,
 				 MinCandidatePerformance: float = 0.5,
 				 IterativeDimensionSearch: bool = False,
-				 TimeDelay: int = 0):
-		"""Initialize MDE with data and parameters.
-
-		:param data: 	2D numpy array where column 0 is time (unless noTime=True)
-		:param target: 	Column index or list of column indices of the target column(s) to forecast
-		:param maxD: 	Maximum number of variables to select per target (including target if include_target=True)
-		:param include_target: 	Whether to start with target in variable list
-		:param convergent: 	Convergence checking mode: 'pre' runs batch CCM on all variables before selection, 'post' checks convergence within each selection loop iteration, False disables convergence checking
-		:param metric: 	Metric to use: "correlation" or "r2"
-		:param batch_size: 	Number of variables to process in each batch
-		:param dtype: 				Torch dtype for tensors (e.g. torch.float32 or torch.float16)
-		:param columns: 	Column indices to use for embedding (defaults to all except time)
-		:param train: 	Training set indices [start, end]
-		:param test: 	Test set indices [start, end]
-		:param embedDimensions: 	Embedding dimension (E). If 0, will be set by Validate()
-		:param predictionHorizon: 	Prediction time horizon (Tp)
-		:param knn: 	Number of nearest neighbors. If 0, will be set to E+1 by Validate()
-		:param step: 	Time delay step size (tau). Negative values indicate lag
-		:param exclusionRadius: 	Temporal exclusion radius for neighbors
-		:param embedded: 	Whether data is already embedded
-		:param validLib: 	Boolean mask for valid library points
-		:param noTime: 	Whether first column is time or data
-		:param ignoreNan: 	Remove NaN values from embedding
-		:param verbose: 	Print diagnostic messages
-		:param useSMap: 	Whether to use SMap instead of Simplex
-		:param theta: 	S-Map localization parameter. theta=0 is global linear map, larger values increase localization
-		:param stdThreshold: 	Minimum standard deviation threshold
-		:param CCMLibraryPercentiles: 	Library sizes for CCM testing as percent of train data size
-		:param CCMNumSamples: 	Number of random samples per library size for CCM
-		:param CCMConvergenceThreshold: 	Minimum slope threshold for CCM convergence
-		:param CCMSeed: 	Random seed for reproducible CCM sampling (None for non-reproducible)
-		:param CCMMaxEmbeddingDimensions: 	Maximum embedding dimension for per-variable E search in CCM convergence check
-		:param MinPredictionThreshold: 	Minimum correlation threshold for candidate filtering
-		:param MinCandidatePerformance: 	Minimum performance a candidate alone (stacked at its best history
-			depth up to CCMMaxEmbeddingDimensions) must reach predicting the target for it to stay in the
-			candidate pool. Applied only when convergence checking is on and embedDimensions is auto-searched.
-			0 disables.
-		:param IterativeDimensionSearch: 	If True, the candidate dimension search evaluates each depth on its
-			own valid rows (slower; reproduces the reference implementation). If False (default), all depths
-			share the most restrictive row set in one batched pass.
-		:param TimeDelay: 	Time delay analysis depth. If 0, time delay analysis is disabled
+				 TimeDelay: int = 0,
+				 device = None):
 		"""
-		self.data = data
-		self.targets = [target] if isinstance(target, int) else list(target)
+		:param X_train:		[nTrain, nFeatures] or a list of runs: the candidate columns
+		:param Y_train:		[nTrain, nTargets] or a list of runs
+		:param X_test:		[nTest, nFeatures] or a list of runs; candidates are scored on these rows.
+			None scores the training rows in-sample.
+		:param Y_test:		targets for X_test; required with X_test. A NaN target row is predicted but never scored.
+		:param maxD:		columns to select per target (the target itself counts when include_target)
+		:param include_target:	start with the target series itself selected; it then appears in
+			selected_variables as column index nFeatures + targetIndex
+		:param convergent:	'pre' screens every candidate for convergence before selection, 'post' checks
+			candidates in score order at each step, False skips the check
+		:param metric:		'correlation' or 'r2' for candidate scoring
+		:param batch_size:	candidates per batch
+		:param dtype:		torch dtype for the selection tensors
+		:param columns:		candidate X columns; None uses all
+		:param embedDimensions:	fixed history depth for the convergence check; 0 searches each candidate's depth
+		:param predictionHorizon:	rows between a state and the target it predicts
+		:param knn:			neighbors for the final prediction and the convergence check; 0 means the default
+		:param step:		row offset between stacked copies in the convergence check and depth search
+		:param exclusionRadius:	training states this close in rows are not neighbors. Always applied in the
+			convergence check, which runs on the training rows; applied to the selection and the final
+			prediction only when X_test is omitted, since a separate test array shares no sample axis
+		:param trainRowMask:	optional bool array (or list per run) barring rows from serving as training states
+		:param verbose:		print progress details
+		:param useSMap:		final prediction with SMapPredict instead of SimplexPredict
+		:param theta:		localization for useSMap
+		:param stdThreshold:	candidates with standard deviation below this are dropped
+		:param CCMLibraryPercentiles:	training-subset sizes of the convergence check, percent of training rows
+		:param CCMNumSamples:	random subsets per size
+		:param CCMConvergenceThreshold:	minimum skill-versus-size slope to count as convergent
+		:param CCMSeed:		random seed for the convergence check
+		:param CCMMaxEmbeddingDimensions:	deepest history tried in the per-candidate depth search
+		:param MinPredictionThreshold:	minimum candidate score to be selectable
+		:param MinCandidatePerformance:	minimum score a candidate alone (at its best depth) must reach predicting
+			the target to stay in the pool; applied when convergence checking is on and the depth is searched. 0 disables.
+		:param IterativeDimensionSearch:	True evaluates each depth on its own complete rows (slower, reproduces the
+			reference); False shares the rows complete at the deepest history in one pass
+		:param TimeDelay:	time delay analysis depth; 0 disables
+		:param device:		torch device; None picks cuda when available
+		"""
+		if X_test is not None and Y_test is None:
+			raise ValueError('Y_test is needed to score candidates on X_test')
+		self.xRuns = AsRuns(X_train)
+		self.yRuns = AsRuns(Y_train)
+		self.isInSample = X_test is None
+		self.xTestRuns = self.xRuns if self.isInSample else AsRuns(X_test)
+		self.yTestRuns = self.yRuns if self.isInSample else AsRuns(Y_test)
+		self.isSingleTestRun = not IsListOfRuns(X_train if self.isInSample else X_test)
+		self.isSingleTrainRun = not IsListOfRuns(X_train)
+		self.numFeatures = self.xRuns[0].shape[1]
+		self.numTargets = self.yRuns[0].shape[1]
+		# the target columns sit after the feature columns in the candidate view so that the
+		# target series can start selected (include_target) and feed the convergence check
+		self.targets = [self.numFeatures + j for j in range(self.numTargets)]
+		self.allTrainRuns = [numpy.column_stack([x, y]) for x, y in zip(self.xRuns, self.yRuns)]
+		self.allTestRuns = [numpy.column_stack([x, y]) for x, y in zip(self.xTestRuns, self.yTestRuns)]
+		# the columns that can enter a state: the target columns only when they start selected,
+		# so that a NaN target (a row excluded from scoring) never voids the row's state otherwise
+		self.stateTrainRuns = self.allTrainRuns if include_target else self.xRuns
+		self.stateTestRuns = self.allTestRuns if include_target else self.xTestRuns
+
 		self.maxD = maxD
 		self.include_target = include_target
 		self.convergent = convergent
 		self.metric = metric
 		self.batch_size = batch_size
 		self.columns = columns
-		self.train = train
-		self.test = test
-		# The reference implementation trains on every row whose horizon-shifted
-		# target is inside the data, while EDM.CreateIndices keeps training
-		# targets inside the training span: a positive horizon costs the final
-		# window its last predictionHorizon rows, and a negative horizon moves
-		# each window start up — by |horizon| for pre-embedded input and by
-		# |horizon| - 1 for unembedded input. Padding the windows by the same
-		# amounts restores the reference row set: CreateIndices takes the shift
-		# back out and its absolute bounds guards clip at the data edges.
-		# _boundsOnlyTrain is what MDE passes to its pre-embedded Simplex and
-		# SMap calls; _boundsOnlyTrainUnembedded goes to the unembedded
-		# dimension sweep in FindOptimalEmbeddingDimensionality.
-		if train is not None and predictionHorizon > 0:
-			paddedTrain = list(train)
-			lastStart, lastStop = paddedTrain[-1]
-			paddedTrain[-1] = (lastStart, lastStop + predictionHorizon)
-			self._boundsOnlyTrain = paddedTrain
-			self._boundsOnlyTrainUnembedded = paddedTrain
-		elif train is not None and predictionHorizon < 0:
-			self._boundsOnlyTrain = [(max(windowStart + predictionHorizon, 0), windowStop)
-									 for (windowStart, windowStop) in train]
-			self._boundsOnlyTrainUnembedded = [(max(windowStart + predictionHorizon + 1, 0), windowStop)
-											   for (windowStart, windowStop) in train]
-		else:
-			self._boundsOnlyTrain = train
-			self._boundsOnlyTrainUnembedded = train
 		self.embedDimensions = embedDimensions
 		self.predictionHorizon = predictionHorizon
 		self.knn = knn
 		self.step = step
 		self.exclusionRadius = exclusionRadius
-		self.embedded = embedded
-		self.validLib = validLib if validLib is not None else []
-		self.noTime = noTime
-		self.ignoreNan = ignoreNan
+		# separate test arrays share no sample axis with the training arrays, so the radius
+		# applies to the selection and the final prediction only in-sample; the convergence
+		# check runs on the training rows and honors it always
+		self.selectionExclusionRadius = exclusionRadius if self.isInSample else 0
+		self.trainRowMask = trainRowMask
 		self.verbose = verbose
 		self.useSMap = useSMap
 		self.theta = theta
@@ -156,18 +148,12 @@ class MDE:
 		self.iterativeDimensionSearch = IterativeDimensionSearch
 		self.TimeDelay = TimeDelay
 
-		# Per-run candidate dimension-search results, arrays [nTargets, nColumns]
+		# per-run candidate depth-search results, arrays [nTargets, nColumns]
 		self.candidateEmbedDimensions = None
 		self.candidatePeakPerformance = None
 		self._ccmSlopeCache = None
-
 		self._userProvidedEmbedDimensions = embedDimensions != 0
-
-		if torch.cuda.is_available():
-			self.device = torch.device('cuda')
-		else:
-			self.device = torch.device('cpu')
-
+		self.device = ResolveDevice(device)
 
 		self.stepwise_performance = None
 		self.selectedVariables = None
@@ -185,27 +171,29 @@ class MDE:
 
 	@property
 	def target(self) -> int:
-		"""First target column index, for backward compatibility."""
+		"""First target column index in the candidate view."""
 		return self.targets[0]
 
-	def Run(self, return_predictions: bool = True, scoring_function = Correlation) -> MDEResult:
-		"""Execute MDE variable selection and return results.
+	def _RunsOfColumns(self, runs: List[numpy.ndarray], columns, isSingle: bool):
+		selected = [run[:, list(columns)] for run in runs]
+		return selected[0] if isSingle else selected
 
-		:param return_predictions: If False, the predictions field of the result will not be populated
-		:param scoring_function: Scoring function taking (actual, predicted) and returning a scalar. Default is Correlation.
-		:return: Results containing final predictions, selected variables, accuracy, and CCM values
-		:rtype: MDEResult
+	def Run(self, return_predictions: bool = True, scoring_function = ScoringCorrelation) -> MDEResult:
 		"""
-		nTargets = len(self.targets)
+		Select variables for every target, then predict the test rows with the selection.
+
+		:param return_predictions:	False leaves Y_pred empty
+		:param scoring_function:	scoring_function(actual, predicted) -> float for the final score
+		"""
+		nTargets = self.numTargets
 
 		self._select_variables()
 
-		predicted, time_values, scores = self._predict(scoring_function)
+		Y_pred, scores = self._predict(scoring_function)
 
-		# Build padded 2D arrays for selected_variables, accuracy, ccm_values
 		selected_variables_arr = numpy.zeros([nTargets, self.maxD], dtype = int) - 1
-		accuracy_arr = numpy.zeros([nTargets, self.maxD]) * numpy.nan
-		ccm_values_arr = numpy.zeros([nTargets, self.maxD]) * numpy.nan
+		accuracy_arr = numpy.full([nTargets, self.maxD], numpy.nan)
+		ccm_values_arr = numpy.full([nTargets, self.maxD], numpy.nan)
 
 		for j in range(nTargets):
 			n = len(self._selected_variables[j])
@@ -218,20 +206,18 @@ class MDE:
 		self.selectedVariables = self._selected_variables
 
 		self.results_ = MDEResult(
-			time = time_values,
-			predictions = predicted if return_predictions else None,
+			Y_pred = Y_pred if return_predictions else None,
 			selected_variables = selected_variables_arr,
 			performance = accuracy_arr,
 			ccm_values = ccm_values_arr,
 			stepwise_performance = self.stepwise_performance,
 			timeDelayResults = self.timeDelayResults,
-			score = scores
-		)
+			score = scores)
 		return self.results_
 
 	def _select_variables(self) -> None:
-		"""Perform iterative variable selection for all targets in parallel."""
-		nTargets = len(self.targets)
+		"""Greedy selection for all targets together."""
+		nTargets = self.numTargets
 
 		self._selected_variables = [[] for _ in range(nTargets)]
 		self._accuracy = [[] for _ in range(nTargets)]
@@ -241,72 +227,42 @@ class MDE:
 			for j, t in enumerate(self.targets):
 				self._selected_variables[j].append(t)
 
-		dummy = Simplex(
-			data = self.data,
-			columns = numpy.arange(self.data.shape[1]).tolist(),
-			target = self.targets[0],
-			train = self._boundsOnlyTrain,
-			test = self.test,
-			embedDimensions = self.embedDimensions,
-			predictionHorizon = self.predictionHorizon,
-			knn = self.knn,
-			step = self.step,
-			exclusionRadius = self.exclusionRadius,
-			embedded = True,
-			validLib = self.validLib,
-			noTime = self.noTime,
-			ignoreNan = self.ignoreNan,
-			verbose = self.verbose
-		)
-		dummy.EmbedData()
-		trainIndices = numpy.array(dummy.trainIndices, dtype = int)
-		testIndices = numpy.array(dummy.testIndices, dtype = int)
+		inputs = PreparePrediction(self.stateTrainRuns, self.yRuns, None if self.isInSample else self.stateTestRuns,
+								   1, self.step, self.predictionHorizon, self.selectionExclusionRadius, self.trainRowMask)
+		testTargets = TestTargets(self.yTestRuns, inputs)
+		# a test row whose target is NaN is predicted later but never scores a candidate
+		isScored = numpy.isfinite(testTargets).all(axis = 1)
 
-		# selection scores need observed targets: keep only test rows whose
-		# target index t + Tp is in bounds
-		if self.predictionHorizon >= 0:
-			testIndices = testIndices[testIndices + self.predictionHorizon < self.data.shape[0]]
-		else:
-			testIndices = testIndices[testIndices + self.predictionHorizon >= 0]
-
-		trainData = dummy.Embedding[trainIndices, :]
-		testData = dummy.Embedding[testIndices, :]
+		trainData = inputs.trainStates
+		testData = inputs.testStates[isScored]
 		self.trainData = trainData
 		self.testData = testData
 
 		nTrain = trainData.shape[0]
 		nTest = testData.shape[0]
-		nVars = self.data.shape[1]
+		nVars = self.numFeatures + self.numTargets
 
-		if self.columns is not None:
-			all_columns = list(self.columns)
-		else:
-			all_columns = list(range(nVars))
+		all_columns = list(self.columns) if self.columns is not None else list(range(self.numFeatures))
 
 		excluded_base = set(self.targets)
-		low_std = set(numpy.argwhere(numpy.std(self.data, axis = 0) < self.stdThreshold).squeeze().tolist())
+		allTrain = numpy.concatenate(self.allTrainRuns)
+		low_std = set(numpy.argwhere(numpy.std(allTrain, axis = 0) < self.stdThreshold).squeeze(axis = 1).tolist())
 		excluded_base |= low_std
-		if not self.noTime:
-			excluded_base.add(0)
 
-		# Each target gets its own remaining pool
 		remaining_variables = []
 		for j in range(nTargets):
 			excluded_j = excluded_base | set(self._selected_variables[j])
 			pool = [c for c in all_columns if c not in excluded_j]
 			remaining_variables.append(pool)
 
-		# Per-candidate growth-slope cache, indexed [targetPosition, column].
-		# NaN is the flag: not yet computed, and a computed NaN slope is never
-		# accepted, so it needs no separate presence mask.
+		# growth-slope cache [targetPosition, column]: NaN means not yet computed; a computed
+		# NaN slope is stored as -inf so it stays cached as rejected
 		self._ccmSlopeCache = numpy.full([nTargets, nVars], numpy.nan)
 
-		# Per-candidate embedding-dimension search + solo-predictability gate.
-		# One batched sweep: each candidate, delay-embedded at every dimension
-		# up to CCMMaxEmbedDimensions, predicts each target; per (target,
-		# candidate) keep the best dimension and its peak performance.
-		# Candidates whose peak falls below MinCandidatePerformance leave the
-		# pool before any convergence check.
+		# per-candidate depth search and solo-predictability gate: one batched sweep in which
+		# each candidate, stacked to every depth up to CCMMaxEmbedDimensions, predicts each
+		# target; the best depth and its peak are kept per (target, candidate), and candidates
+		# below MinCandidatePerformance leave the pool before any convergence check
 		self.candidateEmbedDimensions = numpy.full([nTargets, nVars], -1, dtype = int)
 		self.candidatePeakPerformance = numpy.full([nTargets, nVars], numpy.nan)
 		remaining_variables = [numpy.array(pool, dtype = int) for pool in remaining_variables]
@@ -314,10 +270,8 @@ class MDE:
 			self._search_candidate_embedding_dimensions(remaining_variables)
 			if self.MinCandidatePerformance > 0:
 				passesCandidateGate = self.candidatePeakPerformance >= self.MinCandidatePerformance
-				remaining_variables = [pool[passesCandidateGate[j, pool]]
-									   for j, pool in enumerate(remaining_variables)]
+				remaining_variables = [pool[passesCandidateGate[j, pool]] for j, pool in enumerate(remaining_variables)]
 
-		# Filter convergent variables before selection if convergent='pre'
 		if self.convergent == 'pre':
 			for j, t in enumerate(self.targets):
 				remaining_variables[j] = self._filter_convergent_variables(remaining_variables[j], t)
@@ -327,49 +281,47 @@ class MDE:
 		trainData_tensor = torch.tensor(trainData, device = self.device, dtype = self.dtype)
 		testData_tensor = torch.tensor(testData, device = self.device, dtype = self.dtype)
 
-		exclusion_mask = dummy._BuildExclusionMask()
-
-		# 3D distance matrix: [nTargets, nTrain, nTest]
+		# [nTargets, nTrain, nTest] accumulated squared distances of the selected columns
 		current_best_distance_matrix = torch.zeros([nTargets, nTrain, nTest], device = self.device, dtype = self.dtype)
-		if exclusion_mask.any():
-			mask_tensor = torch.tensor(exclusion_mask, device = self.device)
+		if inputs.exclusionMask is not None:
+			mask_tensor = torch.tensor(inputs.exclusionMask[:, isScored], device = self.device)
 			current_best_distance_matrix[:, mask_tensor] = float('inf')
+		for j in range(nTargets):
+			for var in self._selected_variables[j]:
+				train_col = trainData_tensor[:, var]
+				test_col = testData_tensor[:, var]
+				current_best_distance_matrix[j] += (train_col.unsqueeze(1) - test_col.unsqueeze(0)) ** 2
 
-		train_y_tensor = torch.tensor(self.data[trainIndices + self.predictionHorizon, :][:, self.targets],
-									  device = self.device, dtype = self.dtype)  # shape [nTrain, nTargets]
+		train_y_tensor = torch.tensor(inputs.trainTargets, device = self.device, dtype = self.dtype)	# [nTrain, nTargets]
+		test_y_tensor = torch.tensor(testTargets[isScored], device = self.device, dtype = self.dtype)	# [nTest, nTargets]
 
-		test_y_tensor = torch.tensor(self.data[testIndices + self.predictionHorizon, :][:, self.targets],
-									 device = self.device, dtype = self.dtype)  # shape [nTest, nTargets]
+		numCandidateColumns = len(set().union(*[set(pool.tolist()) for pool in remaining_variables]) or {0})
+		batchSize = max(1, min(self.batch_size, numCandidateColumns))
+		batch_distances = torch.zeros([batchSize, nTrain, nTest], device = self.device, dtype = self.dtype)
+		candidateDistances = torch.empty([batchSize, nTrain, nTest], device = self.device, dtype = self.dtype)
+		perfs = torch.zeros([nTargets, batchSize], device = self.device, dtype = self.dtype)
 
-		batch_distances = torch.zeros([self.batch_size, nTrain, nTest], device = self.device, dtype = self.dtype)
-		candidateDistances = torch.empty([self.batch_size, nTrain, nTest], device = self.device, dtype = self.dtype)
-		perfs = torch.zeros([nTargets, self.batch_size], device = self.device, dtype = self.dtype)
+		progressBar = ProgressBar(total = self.maxD, desc = 'Selecting variables', leave = False, disable = not self.verbose)
 
-		progressBar = ProgressBar(total = self.maxD, desc = 'Selecting variables', leave = False)
-
-		# a target that selects nothing in a round can never select anything in a
-		# later round (scores unchanged, gate results cached), so it is done
+		# a target that selects nothing in a round can never select anything later
 		activeTargets = [True] * nTargets
 
 		for i in range(self.maxD):
 			current_knns = [len(self._selected_variables[j]) + 2 for j in range(nTargets)]
 
-			all_remaining = sorted(set().union(*[set(remaining_variables[j])
-												 for j in range(nTargets) if activeTargets[j]] or [set()]))
+			all_remaining = sorted(set().union(*[set(remaining_variables[j]) for j in range(nTargets) if activeTargets[j]] or [set()]))
 			if len(all_remaining) == 0:
 				break
 
 			candidate_performance = [[] for _ in range(nTargets)]
 
-			for batch_start in range(0, len(all_remaining), self.batch_size):
-				batch_end = min(batch_start + self.batch_size, len(all_remaining))
+			for batch_start in range(0, len(all_remaining), batchSize):
+				batch_end = min(batch_start + batchSize, len(all_remaining))
 				batch_vars = all_remaining[batch_start:batch_end]
-				# Compute X candidate distances (shared across all targets)
 				for k, var in enumerate(batch_vars):
 					diff = trainData_tensor[:, var].unsqueeze(1) - testData_tensor[:, var].unsqueeze(0)
 					batch_distances[k, :, :] = diff * diff
 
-				# Per-target evaluation
 				for j in range(nTargets):
 					if not activeTargets[j]:
 						continue
@@ -382,32 +334,27 @@ class MDE:
 					numCandidates = len(theseCandidates)
 					knn = current_knns[j]
 
-					torch.add(batch_distances[theseIndices],
-							  current_best_distance_matrix[j].unsqueeze(0),
+					torch.add(batch_distances[theseIndices], current_best_distance_matrix[j].unsqueeze(0),
 							  out = candidateDistances[:numCandidates])
 
 					batch_simplex_predict_and_score(candidateDistances[:numCandidates], knn,
 													train_y_tensor[:, j], test_y_tensor[:, j],
-													self.ScoreFunction,
-													perf_out = perfs[j, :numCandidates])
+													self.ScoreFunction, perf_out = perfs[j, :numCandidates])
 
 					perfs_numpy = perfs[j, :numCandidates].cpu().numpy()
 					for v, var in enumerate(theseCandidates):
 						candidate_performance[j].append((var, float(perfs_numpy[v])))
 
-			# Per-target selection
 			for j in range(nTargets):
 				if not activeTargets[j]:
 					continue
-				candidate_performance[j].sort(key = lambda x: x[1] if not numpy.isnan(x[1]) else -numpy.inf,
-											  reverse = True)
+				candidate_performance[j].sort(key = lambda x: x[1] if not numpy.isnan(x[1]) else -numpy.inf, reverse = True)
 
 				if self.MinPredictionThreshold > 0:
 					candidate_performance[j] = [(var, score) for var, score in candidate_performance[j]
 												if not numpy.isnan(score) and score >= self.MinPredictionThreshold]
 
-				r = numpy.array(candidate_performance[j]) if len(candidate_performance[j]) > 0 else numpy.array(
-					[]).reshape(0, 2)
+				r = numpy.array(candidate_performance[j]) if len(candidate_performance[j]) > 0 else numpy.array([]).reshape(0, 2)
 				if len(r) > 0:
 					self.stepwise_performance[j, i, r[:, 0].astype(int)] = r[:, 1]
 
@@ -418,8 +365,7 @@ class MDE:
 					for candidate_var, candidate_score in candidate_performance[j]:
 						if numpy.isnan(candidate_score):
 							continue
-						is_convergent, ccm_slope = self._check_single_candidate_convergence(int(candidate_var),
-																							self.targets[j])
+						is_convergent, ccm_slope = self._check_single_candidate_convergence(int(candidate_var), self.targets[j])
 						if is_convergent:
 							best_var = candidate_var
 							best_score = candidate_score
@@ -437,221 +383,123 @@ class MDE:
 
 					train_col = trainData_tensor[:, best_var]
 					test_col = testData_tensor[:, best_var]
-					dist = (train_col.unsqueeze(1) - test_col.unsqueeze(0)) ** 2
-					current_best_distance_matrix[j] += dist
+					current_best_distance_matrix[j] += (train_col.unsqueeze(1) - test_col.unsqueeze(0)) ** 2
 				else:
 					activeTargets[j] = False
 					if self.verbose:
-						print('Dimension {}: no acceptable candidate for target {}; '
-							  'terminating its expansion'.format(i + 1, self.targets[j]))
+						print('Dimension {}: no acceptable candidate for target {}; terminating its expansion'.format(i + 1, self.targets[j]))
 
 			progressBar.update(1)
 
 			if not any(activeTargets):
 				break
 
-		# Clean up GPU tensors
-		if torch.cuda.is_available():
-			del trainData_tensor
-			del testData_tensor
-			del train_y_tensor
-			del test_y_tensor
-			del batch_distances
-			del candidateDistances
-			del perfs
-			torch.cuda.empty_cache()
-
-		# Move to CPU for reuse in _final_prediction, avoiding redundant distance computation
-		self._finalDistanceMatrix = current_best_distance_matrix.cpu()
-		self._selectionTrainIndices = trainIndices
-		self._selectionTestIndices = testIndices
-		del current_best_distance_matrix
-
-		# TODO: the thing where we go through all possible delays of all selected variables and pick from those
-
+		progressBar.close()
+		del trainData_tensor, testData_tensor, train_y_tensor, test_y_tensor
+		del batch_distances, candidateDistances, perfs, current_best_distance_matrix
 		if torch.cuda.is_available():
 			torch.cuda.empty_cache()
 
-	def _fit_single_EDM_instance(self, variables: List[int], target: int) -> SimplexResult:
+	def _predict(self, scoring_function = ScoringCorrelation):
 		"""
-		Fit a single EDM instance with given variable indices and target.
+		Predict every test row of every target from its selected columns with SimplexPredict
+		(or SMapPredict). A target that selected nothing has NaN predictions and score.
 
-		:param variables: Column indices to use for prediction
-		:param target: Target column index
-		:return: Prediction results
-		:rtype: SimplexResult or SMapResult
+		:return: (Y_pred shaped like Y_test with one column per target, scores [nTargets])
 		"""
-		if self.useSMap:
-			smap = SMap(
-				data = self.data,
-				columns = variables,
-				target = target,
-				train = self._boundsOnlyTrain,
-				test = self.test,
-				embedDimensions = self.embedDimensions,
-				predictionHorizon = self.predictionHorizon,
-				knn = self.knn,
-				step = self.step,
-				exclusionRadius = self.exclusionRadius,
-				theta = self.theta,
-				embedded = True,
-				validLib = self.validLib,
-				noTime = self.noTime,
-				ignoreNan = self.ignoreNan,
-				verbose = self.verbose
-			)
-			smap.knnThreads = 1
-			result = smap.Run()
-			return result
-		else:
-			simplex = Simplex(
-				data = self.data,
-				columns = variables,
-				target = target,
-				train = self._boundsOnlyTrain,
-				test = self.test,
-				embedDimensions = self.embedDimensions,
-				predictionHorizon = self.predictionHorizon,
-				knn = 0,
-				step = self.step,
-				exclusionRadius = self.exclusionRadius,
-				embedded = True,
-				validLib = self.validLib,
-				noTime = self.noTime,
-				ignoreNan = self.ignoreNan,
-				verbose = self.verbose
-			)
-			return simplex.Run()
-
-	def _predict(self, scoring_function = Correlation):
-		"""Run final prediction for each target with its selected variables.
-
-		Reuses the accumulated distance matrix from _select_variables() rather than
-		recomputing pairwise distances from scratch.
-
-		For SMap, falls back to _fit_single_EDM_instance since SMap does not use
-		the same distance-accumulation scheme.
-
-		:param scoring_function: Scoring function taking (actual, predicted) and returning a scalar.
-		:return: (predictions [N, K], time [N], scores [K])
-		"""
-		nTargets = len(self.targets)
-
-		# A target whose pool emptied before anything was selected has no model:
-		# its predictions and score stay NaN instead of coming from an arbitrary
-		# neighbor (simplex) or an all-columns fallback (SMap).
-		if self.useSMap:
-			results = [self._fit_single_EDM_instance(self._selected_variables[j], self.targets[j])
-					   if len(self._selected_variables[j]) else None
-					   for j in range(nTargets)]
-			firstResult = next((result for result in results if result is not None), None)
-			if firstResult is not None:
-				timeValues = firstResult.time
-			elif self.noTime:
-				timeValues = self._selectionTestIndices + self.predictionHorizon
-			else:
-				timeValues = self.data[self._selectionTestIndices + self.predictionHorizon, 0]
-			n = len(timeValues)
-			predictions = numpy.full([n, nTargets], numpy.nan)
-			scores = numpy.full(nTargets, numpy.nan)
-			for j, result in enumerate(results):
-				if result is None:
-					continue
-				predictions[:, j] = result.projection[:, 2]
-				scores[j] = scoring_function(result.projection[:, 1], result.projection[:, 2])
-			return predictions, timeValues, scores
-
-		trainIndices = self._selectionTrainIndices
-		testIndices = self._selectionTestIndices
-		nTest = len(testIndices)
-
-		if self.noTime:
-			timeValues = testIndices + self.predictionHorizon
-		else:
-			timeValues = self.data[testIndices + self.predictionHorizon, 0]
-
-		# Move stored squared-distance matrix back to device: shape [nTargets, nTrain, nTest]
-		distanceMatrix = self._finalDistanceMatrix.to(self.device)
-		predictions = numpy.full([nTest, nTargets], numpy.nan)
+		nTargets = self.numTargets
+		testLengths = [run.shape[0] for run in self.yTestRuns]
+		Y_pred = [numpy.full((length, nTargets), numpy.nan) for length in testLengths]
 		scores = numpy.full(nTargets, numpy.nan)
 
-		for j, target in enumerate(self.targets):
-			if len(self._selected_variables[j]) == 0:
+		for j in range(nTargets):
+			variables = list(self._selected_variables[j])
+			if len(variables) == 0:
 				continue
-			knn = len(self._selected_variables[j]) + 1
-			trainY = torch.tensor(self.data[trainIndices + self.predictionHorizon, target],
-								  device = self.device, dtype = self.dtype)
-			testY = torch.tensor(self.data[testIndices + self.predictionHorizon, target])
-			preds = batch_simplex_predict(distanceMatrix[j:j + 1, :, :], knn, trainY)
-			predictions[:, j] = preds.cpu().numpy().squeeze()
-			scores[j] = scoring_function(testY, preds).cpu().numpy()
+			X_train = self._RunsOfColumns(self.allTrainRuns, variables, self.isSingleTrainRun)
+			Y_train = self._RunsOfColumns(self.yRuns, [j], self.isSingleTrainRun)
+			X_test = None if self.isInSample else self._RunsOfColumns(self.allTestRuns, variables, self.isSingleTestRun)
+			Y_test = self._RunsOfColumns(self.yTestRuns, [j], self.isSingleTestRun)
+			common = dict(embedDimensions = 1, step = self.step, predictionHorizon = self.predictionHorizon,
+						  exclusionRadius = self.selectionExclusionRadius, trainRowMask = self.trainRowMask,
+						  scoringFunction = scoring_function, device = self.device, dtype = self.dtype)
+			if self.useSMap:
+				result = SMapPredict(X_train, Y_train, X_test, Y_test, knn = self.knn, theta = self.theta, **common)
+			else:
+				result = SimplexPredict(X_train, Y_train, X_test, Y_test, knn = len(variables) + 1, **common)
+			predicted = result.Y_pred if isinstance(result.Y_pred, list) else [result.Y_pred]
+			for run, values in zip(Y_pred, predicted):
+				run[:, j] = values[:, 0]
+			scores[j] = result.score[0]
 
-		del distanceMatrix
-		if torch.cuda.is_available():
-			torch.cuda.empty_cache()
-
-		return predictions, timeValues, scores
+		return (Y_pred[0] if self.isSingleTestRun else Y_pred), scores
 
 	def _search_candidate_embedding_dimensions(self, remaining_variables) -> None:
-		"""Batched per-candidate embedding-dimension search.
-
-		Each candidate column, stacked at every history depth up to
-		CCMMaxEmbedDimensions, predicts each target over the train/test
-		windows. Per (target, candidate) the best-scoring depth and its peak
-		performance are stored in candidateEmbedDimensions /
-		candidatePeakPerformance. The chosen depth is later consumed by the
-		convergence check, where the target's history reconstructs the
-		candidate.
-
-		:param remaining_variables: per-target candidate column index arrays
 		"""
-		from torchEDM.Hyperparameters import FindOptimalEmbeddingDimensionality
+		Per-candidate depth search: each candidate column, stacked at every depth up to
+		CCMMaxEmbedDimensions, predicts each target over the test rows. The best depth and
+		its peak score are stored per (target, candidate) for the convergence check.
+		"""
+		from ..Hyperparameters import FindOptimalEmbeddingDimensionality
 
 		sweepColumns = numpy.unique(numpy.concatenate(remaining_variables))
 		if len(sweepColumns) == 0:
 			return
 
 		scores = FindOptimalEmbeddingDimensionality(
-			self.data[:, sweepColumns], self.data[:, self.targets],
+			self._RunsOfColumns(self.allTrainRuns, sweepColumns, self.isSingleTrainRun),
+			self.yRuns[0] if self.isSingleTrainRun else self.yRuns,
+			None if self.isInSample else self._RunsOfColumns(self.allTestRuns, sweepColumns, self.isSingleTestRun),
+			None if self.isInSample else (self.yTestRuns[0] if self.isSingleTestRun else self.yTestRuns),
 			maxDims = self.CCMMaxEmbedDimensions,
-			train = self._boundsOnlyTrainUnembedded, test = self.test,
 			predictionHorizon = self.predictionHorizon,
-			step = self.step, exclusionRadius = self.exclusionRadius,
-			embedded = False, validLib = self.validLib,
-			ignoreNan = self.ignoreNan, batched = not self.iterativeDimensionSearch,
-			joint = False, dtype = self.dtype)
+			step = self.step, exclusionRadius = self.selectionExclusionRadius, trainRowMask = self.trainRowMask,
+			batched = not self.iterativeDimensionSearch, joint = False, dtype = self.dtype, device = self.device)
 
 		scores = numpy.asarray(scores)
 		if scores.ndim == 2:  # single target squeezed to [nVars, maxDims]
 			scores = scores[None, :, :]
 
-		bestDimensions = numpy.argmax(scores, axis = 2)  # [nTargets, nSweepColumns]
+		bestDimensions = numpy.argmax(scores, axis = 2)
 		peaks = numpy.take_along_axis(scores, bestDimensions[:, :, None], axis = 2)[:, :, 0]
 		self.candidateEmbedDimensions[:, sweepColumns] = bestDimensions + 1
 		self.candidatePeakPerformance[:, sweepColumns] = peaks
 
-	def _filter_convergent_variables(self, candidate_columns: List[int], target: int) -> List[int]:
-		"""Filter candidate variables to only include convergent ones using BatchedCCM.
+	def _LibrarySizes(self):
+		return [int(percentile / 100 * self.trainData.shape[0]) for percentile in self.CCMLibraryPercentiles]
 
-		:param candidate_columns: Column indices to check for convergence
-		:param target: Target column index
-		:return: Convergent column indices
-		"""
+	def _ConvergenceCheck(self, candidateColumns, target, embeddingDimensions, libSizes, x_batch = 1000) -> ConvergentCrossMap:
+		"""The target's stacked history cross-maps each candidate on the training rows."""
+		return ConvergentCrossMap(
+			X_train = self._RunsOfColumns(self.allTrainRuns, [target], self.isSingleTrainRun),
+			Y_train = self._RunsOfColumns(self.allTrainRuns, candidateColumns, self.isSingleTrainRun),
+			trainSizes = libSizes,
+			repeats = self.CCMNumSamples,
+			embedDimensions = embeddingDimensions,
+			maxEmbedDimensions = self.CCMMaxEmbedDimensions,
+			predictionHorizon = self.predictionHorizon,
+			knn = self.knn if self.knn > 0 else None,
+			step = self.step,
+			exclusionRadius = self.exclusionRadius,
+			trainRowMask = self.trainRowMask,
+			device = self.device,
+			x_batch = x_batch,
+			batchMode = 'sample',
+			dtype = self.dtype,
+			seed = self.CCMSeed,
+			showProgress = False)
+
+	def _filter_convergent_variables(self, candidate_columns, target: int):
+		"""Keep the candidates whose cross-map skill grows with the training-subset size."""
 		if len(candidate_columns) == 0:
 			return numpy.asarray(candidate_columns, dtype = int)
 
-		lib_sizes = [int(percentile / 100 * self.trainData.shape[0]) for percentile in self.CCMLibraryPercentiles]
-
+		lib_sizes = self._LibrarySizes()
 		if len(lib_sizes) < 2:
 			return candidate_columns
 
-		# slope is per fraction of the training window, so the threshold is
-		# invariant to the percentile grid
-		lib_sizes_normalized = numpy.array(lib_sizes, dtype = float)
-		lib_sizes_normalized = lib_sizes_normalized / self.trainData.shape[0]
-
-		X = self.data[:, candidate_columns]
-		Y = self.data[:, target]
+		# slope per fraction of the training rows, so the threshold does not depend on the percentile grid
+		lib_sizes_normalized = numpy.array(lib_sizes, dtype = float) / self.trainData.shape[0]
 
 		if self._userProvidedEmbedDimensions:
 			embeddingDimensions = self.embedDimensions
@@ -660,39 +508,13 @@ class MDE:
 			candidateColumnArray = numpy.asarray(candidate_columns, dtype = int)
 			embeddingDimensions = self.candidateEmbedDimensions[targetPosition, candidateColumnArray][None, :]
 
-		batchedCCM = ConvergentCrossMap(
-			X = Y,
-			Y = X,
-			trainSizes = lib_sizes,
-			repeats = self.CCMNumSamples,
-			embedDimensions = embeddingDimensions,
-			maxEmbedDimensions = self.CCMMaxEmbedDimensions,
-			predictionHorizon = self.predictionHorizon,
-			knn = self.knn if self.knn > 0 else None,
-			step = self.step,
-			exclusionRadius = self.exclusionRadius,
-			validLib = self.validLib,
-			ignoreNan = self.ignoreNan,
-			trainIndices = self.train,
-			testIndices = self.test,
-			device = self.device,
-			batchMode = 'sample',
-			dtype = self.dtype,
-			seed = self.CCMSeed,
-			showProgress = False
-		)
-
-		result = batchedCCM.Run()
-
-		del batchedCCM
+		result = self._ConvergenceCheck(list(candidate_columns), target, embeddingDimensions, lib_sizes).Run()
 		if torch.cuda.is_available():
 			torch.cuda.empty_cache()
 
 		x = torch.tensor(lib_sizes_normalized, dtype = torch.float32, device = self.device)
-		# The CCM result squeezes a single-candidate axis away; restore
-		# [nTrainSizes, nCandidates] so the slope math stays per candidate.
-		y = torch.tensor(result.forward_performance, dtype = torch.float32, device = self.device)
-		y = y.reshape(len(lib_sizes), -1)
+		# a single candidate comes back squeezed; restore [nSizes, nCandidates]
+		y = torch.tensor(result.forward_performance, dtype = torch.float32, device = self.device).reshape(len(lib_sizes), -1)
 
 		x_mean = x.mean()
 		y_mean = y.mean(dim = 0)
@@ -701,38 +523,28 @@ class MDE:
 		slopes = (xy_mean - x_mean * y_mean) / x_var
 
 		isConvergent = (slopes > self.CCMConvergenceThreshold).cpu().numpy()
-
 		return numpy.asarray(candidate_columns, dtype = int)[isConvergent]
 
 	def _check_single_candidate_convergence(self, candidate: int, target: int) -> Tuple[bool, float]:
-		"""Check CCM convergence for a candidate variable predicting a given target.
-
-		:param candidate: candidate variable to check
-		:param target: Target column index
-		:return: (isConvergent, slope) tuple
+		"""
+		Cross-map convergence of one candidate, cached per run: a rejected candidate stays
+		rejected at later steps.
+		:return: (isConvergent, slope)
 		"""
 		targetPosition = self.targets.index(target)
 
-		# Slopes are cached per run: a candidate is tested once, a rejected
-		# candidate stays rejected across later dimensions. NaN means not yet
-		# computed; a computed slope that comes back NaN is stored as -inf so
-		# it stays cached as rejected instead of being re-tested.
 		if self._ccmSlopeCache is not None:
 			cachedSlope = self._ccmSlopeCache[targetPosition, candidate]
 			if not numpy.isnan(cachedSlope):
 				return (cachedSlope > self.CCMConvergenceThreshold, float(cachedSlope))
 
-		lib_sizes = [int(percentile / 100 * self.trainData.shape[0]) for percentile in self.CCMLibraryPercentiles]
-
+		lib_sizes = self._LibrarySizes()
 		if len(lib_sizes) < 2:
 			if self.verbose:
 				print('Warning: Not enough library sizes for CCM convergence check on column {}'.format(candidate))
 			return (True, 0.5)
 
-		# slope is per fraction of the training window, so the threshold is
-		# invariant to the percentile grid
-		lib_sizes_normalized = numpy.array(lib_sizes, dtype = float)
-		lib_sizes_normalized = lib_sizes_normalized / self.trainData.shape[0]
+		lib_sizes_normalized = numpy.array(lib_sizes, dtype = float) / self.trainData.shape[0]
 
 		if self._userProvidedEmbedDimensions:
 			embeddingDimensions = self.embedDimensions
@@ -741,32 +553,7 @@ class MDE:
 			if embeddingDimensions < 1:
 				embeddingDimensions = None
 
-		batchedCCM = ConvergentCrossMap(
-			X = self.data[:, target],
-			Y = self.data[:, [candidate]],
-			trainSizes = lib_sizes,
-			repeats = self.CCMNumSamples,
-			embedDimensions = embeddingDimensions,
-			maxEmbedDimensions = self.CCMMaxEmbedDimensions,
-			predictionHorizon = self.predictionHorizon,
-			knn = self.knn if self.knn > 0 else None,
-			step = self.step,
-			exclusionRadius = self.exclusionRadius,
-			validLib = self.validLib,
-			ignoreNan = self.ignoreNan,
-			trainIndices = self.train,
-			testIndices = self.test,
-			device = self.device,
-			x_batch = 1,
-			batchMode = 'sample',
-			dtype = self.dtype,
-			showProgress = False,
-			seed = self.CCMSeed
-		)
-
-		result = batchedCCM.Run()
-
-		del batchedCCM
+		result = self._ConvergenceCheck([candidate], target, embeddingDimensions, lib_sizes, x_batch = 1).Run()
 		if torch.cuda.is_available():
 			torch.cuda.empty_cache()
 
@@ -783,5 +570,4 @@ class MDE:
 
 		if self._ccmSlopeCache is not None:
 			self._ccmSlopeCache[targetPosition, candidate] = slope
-		isConvergent = slope > self.CCMConvergenceThreshold
-		return (isConvergent, slope)
+		return (slope > self.CCMConvergenceThreshold, slope)

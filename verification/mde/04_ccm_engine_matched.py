@@ -44,10 +44,9 @@ def main():
     tor_s = []
     for c in ts_cols:
         ccm = ConvergentCrossMap(
-            X=fwd, Y=df[c].values[:, None], trainSizes=libSizes, repeats=20,
+            fwd, df[c].values, trainSizes=libSizes, repeats=20,
             embedDimensions=ref[c]['E'], predictionHorizon=1, step=-1,
-            exclusionRadius=0, trainIndices=[(0, N)],
-            testIndices=[(0, N)], device='cpu', batchMode='sample',
+            exclusionRadius=0, device='cpu', batchMode='sample',
             dtype=torch.float64, seed=SEED, showProgress=False)
         rho = np.asarray(ccm.Run().forward_performance)
         tor_s.append(float(LinearRegression().fit(

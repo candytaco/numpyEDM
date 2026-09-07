@@ -18,7 +18,7 @@ Expected output (torch 2.13 / pyEDM 2.5.7):
 import numpy as np
 import torch
 
-from common import load_fly, ts_columns, fly_split, FLY_FIT_KWARGS
+from common import load_fly, ts_columns, fly_split
 
 
 def manual_simplex_rho(x, y, tr, te, tiebreak, Tp=1, knn=2):
@@ -57,12 +57,13 @@ def main():
     fitter = MDEFitter(MaxD=1, Convergent=False, PredictionHorizon=1,
                        MinPredictionThreshold=0.0, dtype=torch.float64,
                        progressBar=False)
-    fitter.Fit(XTrain, YTrain, XTest, YTest, **FLY_FIT_KWARGS)
+    fitter.Fit(XTrain, YTrain, XTest, YTest)
     mde = fitter.MDE
-    tr, te = mde._selectionTrainIndices, mde._selectionTestIndices
-    print(f'torchEDM train rows: {tr[0]}..{tr[-1]} (n={len(tr)}) | '
-          f'test rows: {te[0]}..{te[-1]} (n={len(te)})')
-    print('reference:           train 0..298 (n=299) | test 300..599 (n=300)')
+    # rows the arrays were built to reproduce (see common.fly_split)
+    tr, te = np.arange(0, 299), np.arange(300, 600)
+    print(f'torchEDM training states n={mde.trainData.shape[0]} | '
+          f'scored test states n={mde.testData.shape[0]}')
+    print('reference:  train 0..298 (n=299) | test 300..599 (n=300)')
 
     torch_rho = {c: mde.stepwise_performance[0, 0, i] for i, c in enumerate(ts_cols)}
     diffs = np.array([torch_rho[c] - ref_rho[c] for c in ts_cols])

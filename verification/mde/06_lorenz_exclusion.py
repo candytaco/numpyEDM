@@ -55,8 +55,12 @@ def main():
                        CCMNumSamples=20, CCMConvergenceThreshold=0.01,
                        CCMSeed=7777, CCMMaxEmbeddingDimensions=15,
                        dtype=torch.float64, progressBar=False)
-    result = fitter.Fit(X[0:500], y[0:500], X[500:1000], y[500:1000],
-                        TrainStart=0, TrainEnd=1, TestStart=0, TestEnd=1)
+    # reference lib=[1,500], pred=[501,1000]: the test arrays start 70 rows
+    # early (15 samples at step -5) so the first scored state (row 500) has
+    # complete history; the early targets are NaN so they are never scored
+    y_test = y[430:1000].astype(float).copy()
+    y_test[:71] = np.nan
+    result = fitter.Fit(X[0:500], y[0:500], X[430:1000], y_test)
     sel = [cols[i] for i in result.selected_variables[0] if i >= 0]
     rho = [round(float(r), 6) for r in result.performance[0] if not np.isnan(r)]
     ccm = [round(float(r), 5) for r in result.ccm_values[0] if not np.isnan(r)]
@@ -67,10 +71,9 @@ def main():
     print('\nsample-mode CCM exclusionRadius handling (V5 manifold -> V1):')
     for radius in [0, 10]:
         ccm2 = ConvergentCrossMap(
-            X=y, Y=data[['V1']].values, trainSizes=[50, 75, 425, 450],
+            y[0:500], data['V1'].values[0:500], trainSizes=[50, 75, 425, 450],
             repeats=20, embedDimensions=5, predictionHorizon=1, step=-5,
-            exclusionRadius=radius, trainIndices=[(0, 500)],
-            testIndices=[(500, 999)], device='cpu', batchMode='sample',
+            exclusionRadius=radius, device='cpu', batchMode='sample',
             dtype=torch.float64, seed=7777, showProgress=False)
         r = np.asarray(ccm2.Run().forward_performance)
         print(f'  exclusionRadius={radius}: rho by libSize = {np.round(r, 4)}')

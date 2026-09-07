@@ -17,7 +17,7 @@ train/test-separation divergences flip TS24's marginal slope (see 03).
 import numpy as np
 import torch
 
-from common import load_fly, ts_columns, fly_split, FLY_FIT_KWARGS
+from common import load_fly, ts_columns, fly_split
 
 
 def torch_run(df, ts_cols, convergent):
@@ -30,7 +30,7 @@ def torch_run(df, ts_cols, convergent):
                        CCMNumSamples=20, CCMConvergenceThreshold=0.01,
                        CCMSeed=7777, CCMMaxEmbeddingDimensions=15,
                        dtype=torch.float64, progressBar=False)
-    result = fitter.Fit(XTrain, YTrain, XTest, YTest, **FLY_FIT_KWARGS)
+    result = fitter.Fit(XTrain, YTrain, XTest, YTest)
     sel = [ts_cols[i] for i in result.selected_variables[0] if i >= 0]
     rho = [float(r) for r in result.performance[0] if not np.isnan(r)]
     return sel, rho
