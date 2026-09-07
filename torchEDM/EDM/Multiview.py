@@ -366,6 +366,10 @@ class Multiview:
         else :
             comboCols = self.columns
 
+        if len( comboCols ) == 0 :
+            raise RuntimeError( f'Setup() {self.name}: excludeTarget leaves' +\
+                                ' no candidate columns.' )
+
         # Stack delayed copies of only the candidate columns; the time column
         # and unselected columns must not enter the candidate pool. The raw
         # target series is appended as the final column so predictions always
@@ -381,9 +385,6 @@ class Multiview:
         # Column v of comboCols occupies stacked columns
         # [v * embedDimensions, (v + 1) * embedDimensions).
         n_embed_cols = stackedHistory.shape[1]
-        if n_embed_cols == 0 :
-            raise RuntimeError( f'Setup() {self.name}: excludeTarget leaves' +\
-                                ' no candidate columns.' )
         # The earlier D check ran against all input columns; excludeTarget can
         # shrink the candidate pool below that, leaving no D-sized combinations.
         if self.D > n_embed_cols :

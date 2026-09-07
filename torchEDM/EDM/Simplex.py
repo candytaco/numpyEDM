@@ -176,10 +176,13 @@ class Simplex(EDM):
 			testRows = torch.tensor(numpy.asarray(self.testIndices), device=self.device, dtype=torch.long)
 			temporalOffsets = (testRows[None, :] - trainRows[:, None]).abs()
 
-			# Stable double argsort: rows start in trainRow-ascending order, the
-			# first stable sort settles the temporal tie key, the second settles
-			# distance while preserving both tie keys.
-			offsetOrder = torch.argsort(temporalOffsets, dim=0, stable=True)
+			# Stable triple argsort: the first sort puts rows in trainRow-ascending
+			# order (windows may arrive in any order), the second settles the
+			# temporal tie key, the third settles distance while preserving both
+			# tie keys.
+			rowOrder = torch.argsort(trainRows, stable=True)[:, None].expand(-1, temporalOffsets.shape[1])
+			offsetsByRow = torch.gather(temporalOffsets, 0, rowOrder)
+			offsetOrder = torch.gather(rowOrder, 0, torch.argsort(offsetsByRow, dim=0, stable=True))
 			distancesByOffset = torch.gather(distanceMatrix, 0, offsetOrder)
 			distanceOrder = torch.argsort(distancesByOffset, dim=0, stable=True)
 			selection = torch.gather(offsetOrder, 0, distanceOrder)[:self.knn, :]
